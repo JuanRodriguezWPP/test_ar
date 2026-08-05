@@ -24,11 +24,13 @@ async function init() {
 
 async function startExperience() {
   startBtn.style.display = 'none';
-  overlayText.textContent = "Cargando experiencia...";
+  overlayText.textContent = 'Cargando experiencia...';
   loader.style.display = 'flex';
-  
+
   try {
     if (isARSupported) {
+      // Ocultar overlay, arScene.js crea su propio botón "INICIAR CÁMARA AR"
+      overlay.style.display = 'none';
       const { initARScene } = await import('./arScene.js');
       await initARScene(onLoadComplete, onProgress, setInstructions);
     } else {
@@ -36,8 +38,8 @@ async function startExperience() {
       await initFallbackScene(onLoadComplete, onProgress, setInstructions);
     }
   } catch (error) {
-    console.error("Error al cargar la experiencia:", error);
-    overlayText.textContent = "Hubo un error al cargar los modelos.";
+    console.error('Error al cargar la experiencia:', error);
+    overlayText.textContent = 'Hubo un error al cargar los modelos.';
     loader.style.display = 'none';
   }
 }
