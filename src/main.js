@@ -83,8 +83,8 @@ async function launch() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: 'environment' },
-        width:      { ideal: window.innerWidth },
-        height:     { ideal: window.innerHeight }
+        width:      { ideal: 640 }, // Reducido para mejor rendimiento
+        height:     { ideal: 480 }  // Reducido para mejor rendimiento
       },
       audio: false
     });
@@ -129,8 +129,10 @@ async function launch() {
 // Three.js setup
 // ═══════════════════════════════════════════════════════════════
 function initThree() {
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // antialias: false mejora muchísimo el rendimiento en móviles
+  renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, stencil: true, powerPreference: 'high-performance' });
+  // Limitar el pixelRatio a 1.25 para evitar sobrecarga en pantallas 2K/3K de teléfonos
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0);
   renderer.autoClear = false;

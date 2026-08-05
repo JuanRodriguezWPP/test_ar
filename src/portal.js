@@ -92,10 +92,10 @@ async function buildInterior(loader) {
   // Cargar el modelo
   let model = null;
   try {
-    const gltf = await loader.loadAsync('/models/Dia_de_Muertos.glb');
+    const gltf = await loader.loadAsync('/models/Lower_Dia_de_Muertos.glb');
     model = gltf.scene;
   } catch (e) {
-    console.warn('Dia_de_Muertos.glb no encontrado, usando cubo de prueba');
+    console.warn('Lower_Dia_de_Muertos.glb no encontrado, usando cubo de prueba');
     model = createDummyModel();
   }
 
