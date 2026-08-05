@@ -80,16 +80,31 @@ async function startAR() {
   reticle.visible = false;
   scene.add(reticle);
 
-  // Intentar abrir la sesión AR directamente, capturando el error real
+  // Intentar abrir la sesión AR con Fallback progresivo
   try {
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      optionalFeatures: ['hit-test', 'dom-overlay'],
-      domOverlay: { root: document.body }  // Usar document.body, no un div custom
-    });
+    let session;
+    const arOverlay = document.getElementById('ar-overlay');
+    arOverlay.style.display = 'block';
+
+    try {
+      // Intento 1: Con overlay y hit-test
+      session = await navigator.xr.requestSession('immersive-ar', {
+        optionalFeatures: ['hit-test', 'dom-overlay'],
+        domOverlay: { root: arOverlay }
+      });
+    } catch (err1) {
+      console.warn("Intento 1 falló:", err1);
+      // Intento 2: Sesión AR pura sin configuraciones adicionales
+      arOverlay.style.display = 'none'; // ocultar overlay ya que no será soportado
+      session = await navigator.xr.requestSession('immersive-ar');
+      setHud = () => {}; // Desactivar actualizaciones de HUD ya que no hay overlay
+    }
 
     // Sesión iniciada: ocultar splash
     splash.style.display = 'none';
-    hud.style.display = 'block';
+    if (arOverlay.style.display === 'block') {
+      hud.style.display = 'block';
+    }
 
     await renderer.xr.setSession(session);
     session.addEventListener('end', onSessionEnd);
