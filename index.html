@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0" />
@@ -13,18 +14,21 @@
       background-color: transparent;
       color: #fff;
     }
+
     #ui-container {
       position: absolute;
       top: 0;
       left: 0;
       width: 100vw;
       height: 100vh;
-      pointer-events: none; /* Los clicks pasan al canvas 3D */
+      pointer-events: none;
+      /* Los clicks pasan al canvas 3D */
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       z-index: 10;
     }
+
     #overlay {
       position: absolute;
       top: 0;
@@ -39,16 +43,20 @@
       pointer-events: auto;
       z-index: 20;
     }
+
     #overlay h1 {
       margin-bottom: 10px;
     }
+
     #overlay p {
       text-align: center;
       max-width: 80%;
       margin-bottom: 30px;
     }
+
     button {
-      background-color: #00704A; /* Verde Starbucks */
+      background-color: #00704A;
+      /* Verde Starbucks */
       color: white;
       border: none;
       padding: 15px 30px;
@@ -56,53 +64,65 @@
       border-radius: 30px;
       cursor: pointer;
       pointer-events: auto;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
       transition: background-color 0.3s;
     }
+
     button:active {
       background-color: #005a3b;
     }
+
     button:disabled {
       background-color: #555;
       cursor: not-allowed;
     }
+
     #instructions {
-      background: rgba(0, 112, 74, 0.9); /* Verde Starbucks */
+      background: rgba(0, 112, 74, 0.9);
+      /* Verde Starbucks */
       padding: 15px;
       text-align: center;
       font-size: 1.1rem;
       font-weight: bold;
       border-top-left-radius: 20px;
       border-top-right-radius: 20px;
-      display: none; /* Se muestra al iniciar */
+      display: none;
+      /* Se muestra al iniciar */
     }
+
     #loader {
       display: none;
       flex-direction: column;
       align-items: center;
       margin-bottom: 20px;
     }
+
     #loader-text {
       margin-top: 10px;
       font-size: 0.9rem;
     }
+
     /* Spinner CSS */
     .spinner {
       width: 50px;
       height: 50px;
-      border: 5px solid rgba(255,255,255,0.3);
+      border: 5px solid rgba(255, 255, 255, 0.3);
       border-radius: 50%;
       border-top-color: #00704A;
       animation: spin 1s ease-in-out infinite;
     }
+
     @keyframes spin {
-      to { transform: rotate(360deg); }
+      to {
+        transform: rotate(360deg);
+      }
     }
   </style>
 
   <!-- Import maps polyfill removed -->
 
 </head>
+
 <body>
   <div id="ui-container">
     <div style="padding: 20px;"></div>
@@ -110,7 +130,7 @@
   </div>
 
   <div id="overlay">
-    <h1>Portal WebAR</h1>
+    <h1>Portal Test</h1>
     <p id="overlay-text">Detectando soporte para Realidad Aumentada...</p>
     <div id="loader">
       <div class="spinner"></div>
@@ -121,4 +141,5 @@
 
   <script type="module" src="/src/main.js"></script>
 </body>
+
 </html>
