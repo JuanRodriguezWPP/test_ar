@@ -17,35 +17,43 @@ const cameraBg  = document.getElementById('camera-bg');
 // Three.js state
 // ═══════════════════════════════════════════════════════════════
 let renderer, scene, camera;
-let portalGroup = null;
+let portalGroup  = null;
 let portalPlaced = false;
 let insidePortal = false;
-let lastFrameTime = 0;
+let lastTs       = 0;
 
-// ── Giroscopio ────────────────────────────────────────────────
+// ── Giroscopio (solo rotación de cámara) ─────────────────────
 const deviceQuat = new THREE.Quaternion();
 const _euler     = new THREE.Euler();
 const _corrQ     = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const _screenQ   = new THREE.Quaternion();
 const _zAxis     = new THREE.Vector3(0, 0, 1);
-let orientationReady = false;
+let gyroReady    = false;
 
-// ── Movimiento adelante/atrás ─────────────────────────────────
-// ESTRATEGIA: en lugar de mover la cámara (que deriva con el acelerómetro),
-// movemos el PORTAL hacia/desde la cámara. El efecto visual es idéntico.
+// ── Movimiento ────────────────────────────────────────────────
+// La CÁMARA está FIJA en el origen. El PORTAL se acerca o aleja.
+// portalOffset > 0  →  portal se acerca (usuario avanza)
+// portalOffset < 0  →  portal se aleja  (usuario retrocede)
+let portalOffset = 0;   // metros acumulados desde la posición inicial
+let moveVel      = 0;   // velocidad actual m/s (para el toque)
 
-// Velocidad de movimiento del portal (m/s, eje cámara→portal)
-// + = portal se aleja (usuario "retrocede")
-// - = portal se acerca (usuario "avanza")
-let portalVelocity = 0;
+const TOUCH_SPEED  = 1.2;  // m/s con toque
+const MAX_DIST     = 8.0;  // metros máx que puede alejarse el portal
+const STEP_MOVE    = 1.5;  // metros que avanza el portal por cada paso detectado
 
-// Fuente de movimiento activa: 'touch' | 'accel' | null
-let moveIntent = null; // 'forward' | 'backward' | null (de touch)
-const MOVE_SPEED_TOUCH = 0.8; // m/s con toque
+// Touch
+let touchIntent = null; // 'fwd' | 'bwd' | null
 
-// Acelerómetro
-let lastFwdAcc = 0;
-const ACC_DEAD_ZONE = 0.9; // m/s² - ignorar ruido por debajo de esto
+// ── Detección profesional de pasos (algoritmo pico-valle) ────
+// La magnitud del acelerómetro oscila entre ~7 y ~13 m/s² al caminar.
+// Un paso = subida por encima de STEP_HIGH + bajada por debajo de STEP_LOW.
+const STEP_HIGH   = 10.8; // umbral alto (pico del paso)
+const STEP_LOW    = 9.0;  // umbral bajo  (valle del paso)
+const STEP_GAP_MS = 220;  // mínimo ms entre pasos (~4 pasos/s máx)
+let smoothMag   = 9.81; // magnitud suavizada
+let peakSeen    = false; // ¿detectamos ya el pico?
+let lastStepMs  = 0;    // timestamp del último paso
+let stepCount   = 0;    // contador de pasos (para debug en HUD)
 
 // ═══════════════════════════════════════════════════════════════
 // INICIO
@@ -62,21 +70,11 @@ async function launch() {
   showStatus('Solicitando permisos...');
   spinOn();
 
-  // iOS 13+: permisos de sensores
-  if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-    try {
-      const res = await DeviceOrientationEvent.requestPermission();
-      if (res !== 'granted') {
-        showError('Activa el giroscopio en Ajustes > Safari > Movimiento y orientación.');
-        return;
-      }
-    } catch (e) { /* En algunas versiones no lanza error, ignorar */ }
-  }
-
-  if (typeof DeviceMotionEvent?.requestPermission === 'function') {
-    try {
-      await DeviceMotionEvent.requestPermission();
-    } catch (e) { /* Opcional, ignorar si falla */ }
+  // iOS 13+: permisos de sensores (deben pedirse en gesture de usuario)
+  for (const E of [DeviceOrientationEvent, DeviceMotionEvent]) {
+    if (typeof E?.requestPermission === 'function') {
+      try { await E.requestPermission(); } catch (_) {}
+    }
   }
 
   // Abrir cámara trasera
@@ -85,18 +83,17 @@ async function launch() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: 'environment' },
-        width:  { ideal: window.innerWidth },
-        height: { ideal: window.innerHeight }
+        width:      { ideal: window.innerWidth },
+        height:     { ideal: window.innerHeight }
       },
       audio: false
     });
   } catch (e) {
     showError(
-      `No se pudo acceder a la cámara.\n\n` +
-      `Error: ${e.name}\n${e.message}\n\n` +
-      `• Acepta el permiso de cámara cuando aparezca.\n` +
-      `• Verifica que el sitio sea HTTPS.\n` +
-      `• En Ajustes del teléfono, dale permiso de cámara a Chrome/Safari.`
+      `No se pudo abrir la cámara.\n\nError: ${e.name}\n${e.message}\n\n` +
+      `• Acepta el permiso de cámara.\n` +
+      `• El sitio debe ser HTTPS.\n` +
+      `• En Ajustes, dale permiso de cámara a Chrome/Safari.`
     );
     return;
   }
@@ -105,25 +102,24 @@ async function launch() {
   cameraBg.style.display = 'block';
   await new Promise(r => { cameraBg.onloadedmetadata = r; });
 
-  // Three.js
   initThree();
 
   // Sensores
   window.addEventListener('deviceorientation', onOrientation, true);
   window.addEventListener('devicemotion',      onMotion,      true);
 
-  // Controles táctiles (mitad inferior = adelante, mitad superior = atrás)
-  setupTouchControls();
+  // Controles táctiles de movimiento
+  setupTouch();
 
   // Mostrar experiencia
   spinOff();
   splash.style.display = 'none';
-  hud.style.display = 'block';
+  hud.style.display    = 'block';
   btnPlace.style.display = 'block';
 
   showHud('Cargando modelos...');
   await loadPortal();
-  showHud('Pulsa "Colocar portal" y luego muévete hacia él');
+  showHud('Pulsa el botón para colocar el portal delante de ti');
 
   btnPlace.addEventListener('click', placePortal, { once: true });
   renderer.setAnimationLoop(renderLoop);
@@ -133,12 +129,7 @@ async function launch() {
 // Three.js setup
 // ═══════════════════════════════════════════════════════════════
 function initThree() {
-  renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha:     true,
-    stencil:   true,
-    powerPreference: 'high-performance'
-  });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0);
@@ -148,13 +139,13 @@ function initThree() {
 
   scene = new THREE.Scene();
 
-  // Cámara SIEMPRE en el origen — solo rota
+  // Cámara SIEMPRE en el origen — solo rota con giroscopio
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 100);
   camera.position.set(0, 0, 0);
   scene.add(camera);
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 1.4));
-  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
   sun.position.set(2, 5, 3);
   scene.add(sun);
 
@@ -166,94 +157,90 @@ function initThree() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Controles táctiles de movimiento
+// Touch: mitad inferior = avanzar, mitad superior = retroceder
 // ═══════════════════════════════════════════════════════════════
-function setupTouchControls() {
-  // No capturamos touch en el botón "Colocar portal"
-  const canvas = renderer?.domElement;
-
+function setupTouch() {
   document.addEventListener('touchstart', e => {
     if (!portalPlaced) return;
-    // Ignorar toques en botones de UI
-    if (e.target.tagName === 'BUTTON') return;
-
+    if (e.target.closest('button')) return; // ignorar botones UI
     const y = e.touches[0].clientY;
-    const midY = window.innerHeight / 2;
-    // Mitad inferior → avanzar; mitad superior → retroceder
-    moveIntent = y > midY ? 'forward' : 'backward';
+    touchIntent = y > window.innerHeight * 0.5 ? 'fwd' : 'bwd';
     e.preventDefault();
   }, { passive: false });
 
-  document.addEventListener('touchend', () => {
-    moveIntent = null;
-  }, { passive: true });
-
-  document.addEventListener('touchcancel', () => {
-    moveIntent = null;
-  }, { passive: true });
+  document.addEventListener('touchend',    () => { touchIntent = null; }, { passive: true });
+  document.addEventListener('touchcancel', () => { touchIntent = null; }, { passive: true });
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Giroscopio → Rotación de la cámara
+// Giroscopio → Solo rotación de la cámara
 // ═══════════════════════════════════════════════════════════════
 function onOrientation(e) {
   if (e.alpha === null) return;
-  orientationReady = true;
+  gyroReady = true;
 
-  const alpha = THREE.MathUtils.degToRad(e.alpha  ?? 0);
-  const beta  = THREE.MathUtils.degToRad(e.beta   ?? 0);
-  const gamma = THREE.MathUtils.degToRad(e.gamma  ?? 0);
-  const angle = THREE.MathUtils.degToRad(
-    window.screen?.orientation?.angle ?? window.orientation ?? 0
+  _euler.set(
+    THREE.MathUtils.degToRad(e.beta  ?? 0),
+    THREE.MathUtils.degToRad(e.alpha ?? 0),
+    THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
+    'YXZ'
   );
-
-  _euler.set(beta, alpha, -gamma, 'YXZ');
   deviceQuat.setFromEuler(_euler);
   deviceQuat.multiply(_corrQ);
-  _screenQ.setFromAxisAngle(_zAxis, -angle);
+  _screenQ.setFromAxisAngle(
+    _zAxis,
+    -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
+  );
   deviceQuat.multiply(_screenQ);
 
   camera.quaternion.copy(deviceQuat);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Acelerómetro → Complemento de movimiento (si event.acceleration disponible)
+// Acelerómetro → Detección de pasos (algoritmo profesional pico-valle)
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
-  if (!portalPlaced || !portalGroup) return;
+  if (!portalPlaced) return;
 
-  // Usar linear acceleration (sin gravedad) — más limpio
-  const lin = event.acceleration;
-  if (!lin || lin.x === null || lin.x === undefined) return;
+  // accelerationIncludingGravity = SIEMPRE disponible en todos los dispositivos
+  const raw = event.accelerationIncludingGravity;
+  if (!raw || raw.x === null) return;
 
-  // Dirección de avance en el mundo (horizontal)
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
-  fwd.y = 0;
-  if (fwd.lengthSq() < 0.001) return;
-  fwd.normalize();
+  // Magnitud cruda del vector de aceleración
+  const rawMag = Math.sqrt((raw.x ?? 0) ** 2 + (raw.y ?? 0) ** 2 + (raw.z ?? 0) ** 2);
 
-  // Aceleración del dispositivo → al mundo
-  const accWorld = new THREE.Vector3(lin.x ?? 0, lin.y ?? 0, lin.z ?? 0)
-    .applyQuaternion(deviceQuat);
+  // Suavizado LIGERO (0.45/0.55) — preserva los picos del paso
+  // Un filtro más agresivo (0.7/0.3) aplastaba las señales y no detectaba nada
+  smoothMag = smoothMag * 0.45 + rawMag * 0.55;
 
-  // Componente en la dirección de avance
-  const fwdAcc = accWorld.dot(fwd);
+  const now = performance.now();
 
-  // Zona muerta: ignorar ruido
-  if (Math.abs(fwdAcc) < ACC_DEAD_ZONE) {
-    lastFwdAcc *= 0.7;
-    return;
+  // ALGORITMO PICO-VALLE:
+  // Fase 1: esperar pico (magnitud supera STEP_HIGH)
+  if (!peakSeen && smoothMag > STEP_HIGH) {
+    peakSeen = true;
   }
 
-  // Suavizar con filtro de paso bajo
-  lastFwdAcc = lastFwdAcc * 0.5 + fwdAcc * 0.5;
-
-  // Acumular velocidad del portal desde acelerómetro
-  // (solo si el toque no está activo para evitar conflicto)
-  if (moveIntent === null) {
-    portalVelocity += -lastFwdAcc * 0.015; // negativo: avanzar = acercar portal
-    portalVelocity = THREE.MathUtils.clamp(portalVelocity, -0.6, 0.6);
+  // Fase 2: después del pico, esperar el valle (magnitud baja de STEP_LOW)
+  if (peakSeen && smoothMag < STEP_LOW) {
+    peakSeen = false;
+    const elapsed = now - lastStepMs;
+    // Verificar que sea un paso válido (no ruido muy rápido)
+    if (elapsed > STEP_GAP_MS) {
+      lastStepMs = now;
+      onStep();
+    }
   }
+}
+
+function onStep() {
+  // Movimiento DIRECTO: cada paso detectado mueve el portal STEP_MOVE metros
+  // Sin integración de velocidad → sin drift, respuesta inmediata
+  if (touchIntent === 'bwd') return; // si retrocediendo con toque, ignorar pasos
+
+  stepCount++;
+  portalOffset = Math.min(portalOffset + STEP_MOVE, 2.9);
+  applyPortalOffset(); // actualizar posición inmediatamente
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -266,152 +253,137 @@ async function loadPortal() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Colocar portal en el mundo
+// Colocar el portal en la escena
 // ═══════════════════════════════════════════════════════════════
+
+// Estas variables guardan la posición y orientación INICIAL del portal
+// para que el eje de movimiento (portalOffset) sea correcto
+const portalOrigin    = new THREE.Vector3(); // posición inicial del portal
+const portalAxisDir   = new THREE.Vector3(); // dirección de "acercarse" = camera → portal
+
 function placePortal() {
   if (!portalGroup || portalPlaced) return;
 
-  // Dirección hacia la que apunta el teléfono (horizontal)
+  // Dirección horizontal hacia donde apunta el teléfono
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
   fwd.y = 0;
   fwd.normalize();
 
-  // Portal a 3 metros adelante, centrado en X/Z, base en Y = -1
-  // (cámara en Y=0, base del portal a -1m = 1m debajo de los ojos)
-  portalGroup.position.set(
-    fwd.x * 3.0,
-    -1.0,   // base del portal (el portal mide 2.2m, llega a Y=+1.2)
-    fwd.z * 3.0
-  );
+  // Colocar el portal 3m adelante
+  // Cámara está en el origen (0,0,0) → portal a 3m en la dirección de fwd
+  portalOrigin.set(fwd.x * 3.0, -1.0, fwd.z * 3.0);
+  // Dirección de acercamiento: de cámara al portal
+  portalAxisDir.copy(fwd);
 
-  // El portal mira a la cámara (en el plano horizontal)
-  portalGroup.lookAt(0, -1.0, 0); // desde su posición, mira al origen
+  portalGroup.position.copy(portalOrigin);
+
+  // El portal mira de vuelta a la cámara (la apertura apunta hacia el usuario)
+  // lookAt en Three.js hace que +Z local apunte HACIA el target
+  // No - en Object3D, lookAt hace que -Z local apunte al target.
+  // Necesitamos que la apertura esté visible, así que miramos desde el portal hacia origen
+  portalGroup.lookAt(0, -1.0, 0);
 
   scene.add(portalGroup);
   portalPlaced = true;
+  portalOffset  = 0;
   btnPlace.style.display = 'none';
-  showHud('Camina (toca parte inferior) para avanzar · Parte superior para retroceder');
+  showHud('Toca la mitad inferior de la pantalla para avanzar');
 }
 
 // ═══════════════════════════════════════════════════════════════
 // Render loop
 // ═══════════════════════════════════════════════════════════════
-function renderLoop(timestamp) {
-  const dt = lastFrameTime > 0
-    ? Math.min((timestamp - lastFrameTime) * 0.001, 0.05) // cap a 50ms
-    : 0.016;
-  lastFrameTime = timestamp;
+function renderLoop(ts) {
+  const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.05) : 0.016;
+  lastTs = ts;
 
-  // ── Rotación de cámara por giroscopio ────────────────────
-  // (ya se aplica en onOrientation; aquí solo hacemos el leve balanceo si falta)
-  if (!orientationReady) {
-    const t = timestamp * 0.001;
+  // Balanceo cosmético si el giroscopio no tiene datos aún
+  if (!gyroReady) {
+    const t = ts * 0.001;
     camera.rotation.set(Math.sin(t * 0.3) * 0.015, Math.sin(t * 0.2) * 0.03, 0);
   }
 
-  // ── Movimiento del portal ─────────────────────────────────
-  if (portalPlaced && portalGroup) {
-    // Toque táctil: source of truth cuando se está tocando
-    if (moveIntent === 'forward') {
-      portalVelocity = THREE.MathUtils.lerp(portalVelocity, -MOVE_SPEED_TOUCH, 0.15);
-    } else if (moveIntent === 'backward') {
-      portalVelocity = THREE.MathUtils.lerp(portalVelocity, MOVE_SPEED_TOUCH, 0.15);
+  // ── Movimiento con toque (continuo mientras se mantiene) ────
+  if (portalPlaced) {
+    if (touchIntent === 'fwd') {
+      moveVel = THREE.MathUtils.lerp(moveVel,  TOUCH_SPEED, 0.2);
+    } else if (touchIntent === 'bwd') {
+      moveVel = THREE.MathUtils.lerp(moveVel, -TOUCH_SPEED, 0.2);
     } else {
-      // Frenar suavemente al soltar
-      portalVelocity *= 0.85;
-      if (Math.abs(portalVelocity) < 0.002) portalVelocity = 0;
+      moveVel *= 0.80;  // frenar rápido al soltar
+      if (Math.abs(moveVel) < 0.005) moveVel = 0;
     }
 
-    // Aplicar velocidad al portal a lo largo del eje cámara→portal
-    if (Math.abs(portalVelocity) > 0.001) {
-      movePortal(portalVelocity * dt);
+    // Aplicar velocidad del toque al offset
+    if (Math.abs(moveVel) > 0.001) {
+      const newOffset = portalOffset + moveVel * dt;
+      const clamped   = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 2.9);
+      if (clamped !== portalOffset) {
+        portalOffset = clamped;
+        applyPortalOffset();
+      } else {
+        moveVel = 0;
+      }
     }
 
-    // Detectar cruce
     checkCrossing();
   }
 
-  // ── Renderizar ────────────────────────────────────────────
   renderer.clear(true, true, true);
   renderer.render(scene, camera);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Mover el portal a lo largo del eje cámara↔portal
+// Helper: aplicar portalOffset a la posición del grupo del portal
 // ═══════════════════════════════════════════════════════════════
-const _portalWorldPos = new THREE.Vector3();
-const _toPortal       = new THREE.Vector3();
-
-function movePortal(delta) {
-  // Vector del PORTAL al ORIGEN (donde está la cámara)
-  portalGroup.getWorldPosition(_portalWorldPos);
-  _toPortal.copy(_portalWorldPos).negate().setY(0).normalize();
-
-  // delta > 0 = portal se aleja (retroceder)
-  // delta < 0 = portal se acerca (avanzar)
-  // Movemos el portal en la dirección opuesta al delta
-  portalGroup.position.addScaledVector(_toPortal, delta);
-
-  // Límites: el portal no puede pasar por el origen ni alejarse más de 8m
-  const dist = _portalWorldPos.length();
-  if (delta < 0 && dist < 0.4) {
-    // portal demasiado cerca: bloquear avance extremo
-    portalGroup.position.addScaledVector(_toPortal, -delta); // revertir
-    portalVelocity = 0;
-  }
-  if (delta > 0 && dist > 7.5) {
-    portalGroup.position.addScaledVector(_toPortal, -delta); // revertir
-    portalVelocity = 0;
-  }
+function applyPortalOffset() {
+  if (!portalGroup || !portalPlaced) return;
+  // portalOffset positivo → portal va en -portalAxisDir → se acerca a la cámara
+  portalGroup.position
+    .copy(portalOrigin)
+    .addScaledVector(portalAxisDir, -portalOffset);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Detección de cruce del portal
+// Detección de cruce
 // ═══════════════════════════════════════════════════════════════
-const _cp = new THREE.Vector3();
-const _pp = new THREE.Vector3();
-const _fw = new THREE.Vector3();
-const _tp = new THREE.Vector3();
-
 function checkCrossing() {
-  camera.getWorldPosition(_cp);         // siempre en el origen
-  portalGroup.getWorldPosition(_pp);
-  portalGroup.getWorldDirection(_fw);
-  _tp.subVectors(_cp, _pp);
+  // Cuando portalOffset ≥ distancia inicial (3m), el portal cruzó la cámara
+  const threshold = 3.1;
 
-  const dist    = _cp.distanceTo(_pp);
-  const nowIn   = (_tp.dot(_fw) < 0) && (dist < 4.5);
+  const nowInside = portalOffset >= threshold;
 
-  if (nowIn && !insidePortal) {
+  if (nowInside && !insidePortal) {
     insidePortal = true;
     onEnterPortal();
-  } else if (!nowIn && insidePortal) {
+  } else if (!nowInside && insidePortal) {
     insidePortal = false;
     onExitPortal();
   }
 
-  // HUD con distancia
-  if (!insidePortal && portalPlaced) {
-    if (dist < 1.2) {
-      showHud('¡Sigue avanzando!');
-    } else if (dist < 4.0) {
-      showHud(`Portal a ${dist.toFixed(1)}m · Toca la pantalla para moverte`);
+  // HUD con distancia y pasos detectados
+  if (!insidePortal) {
+    const remaining = Math.max(0, (threshold - portalOffset)).toFixed(1);
+    if (portalOffset > 0.3) {
+      showHud(`Pasos: ${stepCount} · Faltan ~${remaining}m para entrar`);
+    } else {
+      showHud('Camina o toca abajo para avanzar al portal');
     }
   }
 }
 
 function onEnterPortal() {
   if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(false);
-  cameraBg.style.transition = 'opacity 0.5s ease';
-  cameraBg.style.opacity = '0.1';
-  showHud('¡Estás dentro! · Parte superior de pantalla para salir');
+  cameraBg.style.transition = 'opacity 0.6s ease';
+  cameraBg.style.opacity = '0.08';
+  showHud('¡Estás dentro! · Toca arriba para salir');
 }
 
 function onExitPortal() {
   if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(true);
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
-  showHud('Camina hacia el portal para entrar');
+  showHud('Toca abajo para avanzar al portal');
 }
 
 // ═══════════════════════════════════════════════════════════════
