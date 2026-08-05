@@ -1,14 +1,21 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Portal AR</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-    html, body {
-      width: 100%; height: 100%;
+    html,
+    body {
+      width: 100%;
+      height: 100%;
       overflow: hidden;
       background: #000;
       font-family: -apple-system, 'Roboto', sans-serif;
@@ -19,10 +26,12 @@
     #camera-bg {
       position: fixed;
       inset: 0;
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
       z-index: 0;
-      display: none;        /* se muestra al abrir la cámara */
+      display: none;
+      /* se muestra al abrir la cámara */
     }
 
     /* ── Canvas Three.js (encima del video, transparente) ── */
@@ -30,7 +39,8 @@
       position: fixed;
       inset: 0;
       z-index: 1;
-      display: none;        /* se muestra cuando está listo */
+      display: none;
+      /* se muestra cuando está listo */
     }
 
     /* ── Pantalla de inicio ──────────────────────────────── */
@@ -59,27 +69,36 @@
 
     #splash p {
       font-size: 1rem;
-      color: rgba(255,255,255,0.65);
+      color: rgba(255, 255, 255, 0.65);
       max-width: 300px;
       line-height: 1.6;
     }
 
     #status-text {
       font-size: 0.9rem;
-      color: rgba(255,255,255,0.5);
+      color: rgba(255, 255, 255, 0.5);
       min-height: 20px;
     }
 
     .spinner {
-      width: 44px; height: 44px;
-      border: 4px solid rgba(255,255,255,0.1);
+      width: 44px;
+      height: 44px;
+      border: 4px solid rgba(255, 255, 255, 0.1);
       border-top-color: #00ff88;
       border-radius: 50%;
       animation: spin 0.75s linear infinite;
       display: none;
     }
-    .spinner.on { display: block; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .spinner.on {
+      display: block;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
 
     #btn-open {
       padding: 18px 52px;
@@ -91,15 +110,18 @@
       font-weight: 700;
       cursor: pointer;
       display: none;
-      box-shadow: 0 8px 32px rgba(0,255,136,0.35);
+      box-shadow: 0 8px 32px rgba(0, 255, 136, 0.35);
       transition: transform 0.15s;
     }
-    #btn-open:active { transform: scale(0.95); }
+
+    #btn-open:active {
+      transform: scale(0.95);
+    }
 
     #error-msg {
       display: none;
-      background: rgba(255,60,60,0.12);
-      border: 1px solid rgba(255,80,80,0.35);
+      background: rgba(255, 60, 60, 0.12);
+      border: 1px solid rgba(255, 80, 80, 0.35);
       border-radius: 14px;
       padding: 16px 20px;
       font-size: 0.85rem;
@@ -113,16 +135,18 @@
     /* ── HUD de instrucciones ────────────────────────────── */
     #hud {
       position: fixed;
-      bottom: 0; left: 0; right: 0;
+      bottom: 0;
+      left: 0;
+      right: 0;
       z-index: 10;
       padding: 22px 20px;
       text-align: center;
       font-size: 1.05rem;
       font-weight: 600;
-      background: linear-gradient(transparent, rgba(0,0,0,0.65));
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
       display: none;
       pointer-events: none;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
     }
 
     /* ── Botón de colocar portal ─────────────────────────── */
@@ -144,10 +168,14 @@
       backdrop-filter: blur(6px);
       transition: background 0.2s;
     }
-    #btn-place:active { background: rgba(0,255,136,0.4); }
+
+    #btn-place:active {
+      background: rgba(0, 255, 136, 0.4);
+    }
   </style>
-  <script type="module" crossorigin src="/assets/index-Ck5CtX2z.js"></script>
+  <script type="module" crossorigin src="/assets/index-B_TG5Z9w.js"></script>
 </head>
+
 <body>
 
   <!-- Fondo: video de la cámara real -->
@@ -155,7 +183,7 @@
 
   <!-- Pantalla de inicio -->
   <div id="splash">
-    <h1>Portal AR</h1>
+    <h1>AR TEST 53</h1>
     <p>Abre tu cámara y toca la pantalla para colocar un portal a otro mundo</p>
     <p id="status-text">Listo para comenzar</p>
     <div class="spinner" id="spinner"></div>
@@ -170,4 +198,5 @@
   <button id="btn-place">📍 Colocar portal aquí</button>
 
 </body>
+
 </html>
