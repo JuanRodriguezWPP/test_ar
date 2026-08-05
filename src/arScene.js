@@ -36,8 +36,7 @@ export async function initARScene(onLoadComplete, onProgress, instructionsCallba
   const uiContainer = document.getElementById('ui-container');
 
   document.body.appendChild(ARButton.createButton(renderer, {
-    requiredFeatures: ['hit-test'],
-    optionalFeatures: ['dom-overlay'],
+    optionalFeatures: ['dom-overlay', 'hit-test'],
     domOverlay: { root: uiContainer }
   }));
 
