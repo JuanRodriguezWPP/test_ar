@@ -83,8 +83,7 @@ async function startAR() {
   // Intentar abrir la sesión AR directamente, capturando el error real
   try {
     const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      optionalFeatures: ['hit-test', 'dom-overlay'],
       domOverlay: { root: document.body }  // Usar document.body, no un div custom
     });
 
@@ -133,17 +132,38 @@ async function loadAssets() {
   portalGroup = await buildPortalGroup(loader);
 }
 
+let hitTestSupported = true; // asume verdadero hasta que falle
+
 // ─── Tap en pantalla: colocar el portal ───────────────────────
 function onSelect() {
-  if (!reticle.visible || portalPlaced) return;
+  if (portalPlaced) return;
 
-  // Clonar posición del reticle
-  portalGroup.position.setFromMatrixPosition(reticle.matrix);
+  if (hitTestSupported && !reticle.visible) {
+    // Si soporta hit-test pero aún no detecta el piso, no hacer nada
+    return;
+  }
+
+  if (hitTestSupported && reticle.visible) {
+    // Colocar donde diga el reticle (piso real)
+    portalGroup.position.setFromMatrixPosition(reticle.matrix);
+  } else {
+    // FALLBACK: Si no soporta hit-test, colocarlo 2 metros adelante de la cámara
+    const camPos = new THREE.Vector3();
+    const camDir = new THREE.Vector3();
+    camera.getWorldPosition(camPos);
+    camera.getWorldDirection(camDir);
+    camDir.y = 0; // mantenerlo a la altura de la cámara, pero plano
+    camDir.normalize();
+    
+    portalGroup.position.copy(camPos).add(camDir.multiplyScalar(2.0));
+    // Bajarlo un poco simulando el suelo
+    portalGroup.position.y -= 1.0; 
+  }
 
   // Rotar el portal para que mire a la cámara
-  const camPos = new THREE.Vector3();
-  camera.getWorldPosition(camPos);
-  portalGroup.lookAt(camPos.x, portalGroup.position.y, camPos.z);
+  const camP = new THREE.Vector3();
+  camera.getWorldPosition(camP);
+  portalGroup.lookAt(camP.x, portalGroup.position.y, camP.z);
 
   scene.add(portalGroup);
   portalPlaced = true;
@@ -159,11 +179,15 @@ function renderLoop(timestamp, frame) {
   const session  = renderer.xr.getSession();
 
   // Hit-test para el reticle
-  if (!portalPlaced) {
+  if (!portalPlaced && hitTestSupported) {
     if (!hitTestRequested) {
       session.requestReferenceSpace('viewer').then(vs => {
         session.requestHitTestSource({ space: vs }).then(src => {
           hitTestSource = src;
+        }).catch(err => {
+          // El teléfono no soporta Hit-Test
+          hitTestSupported = false;
+          setHud('Toca la pantalla para colocar el portal (Modo básico)');
         });
       });
       session.addEventListener('end', () => {
