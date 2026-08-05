@@ -41,37 +41,49 @@ export async function initARScene(onLoadComplete, onProgress, instructionsCallba
   });
 
   arButton.addEventListener('click', () => {
-    // Timeout para verificar si la sesión realmente arranca o se queda bloqueada
     setTimeout(async () => {
       if (!renderer.xr.isPresenting) {
-        alert("Tu dispositivo o navegador bloqueó el acceso a la cámara AR. Activando el visor 3D Inmersivo de respaldo...");
-        
-        // Limpiar basura del AR fallido
+        // Limpiar el intento de AR fallido
         arButton.style.display = 'none';
-        uiContainer.style.display = 'none';
         renderer.dispose();
-        if(container.parentNode) {
-            document.body.removeChild(container);
+        if (container.parentNode) {
+          document.body.removeChild(container);
         }
 
-        // Importar y ejecutar el visor 3D clásico (OrbitControls)
+        // Mostrar loader en el overlay mientras carga el fallback
         document.getElementById('overlay').style.display = 'flex';
-        document.getElementById('overlay-text').innerText = "Cargando visor 3D interactivo...";
+        document.getElementById('overlay-text').innerText = 'Activando visor 3D interactivo...';
         document.getElementById('loader').style.display = 'flex';
         document.getElementById('start-btn').style.display = 'none';
+        // El uiContainer lo manejará el fallback
+        uiContainer.style.display = 'none';
 
         try {
-            const { initFallbackScene } = await import('./fallbackOrbit.js');
-            initFallbackScene(
-                () => {
-                    document.getElementById('overlay').style.display = 'none';
-                },
-                (progress) => {
-                    document.getElementById('loader-text').innerText = `Cargando... ${Math.round(progress)}%`;
-                }
-            );
+          const { initFallbackScene } = await import('./fallbackOrbit.js');
+          // Pasar los 3 parámetros correctamente
+          initFallbackScene(
+            () => {
+              // onLoadComplete: ocultar overlay
+              document.getElementById('overlay').style.display = 'none';
+            },
+            (progress) => {
+              // onProgress
+              const lt = document.getElementById('loader-text');
+              if (lt) lt.innerText = `Cargando... ${Math.round(progress)}%`;
+            },
+            (text) => {
+              // instructionsCallback: mostrar instrucciones
+              const ins = document.getElementById('instructions');
+              if (ins) {
+                ins.innerText = text;
+                ins.style.display = 'inline-block';
+              }
+            }
+          );
         } catch (e) {
-            console.error("Error cargando fallback:", e);
+          console.error('Error cargando fallback:', e);
+          document.getElementById('overlay-text').innerText = 'Error al cargar el visor 3D.';
+          document.getElementById('loader').style.display = 'none';
         }
       }
     }, 3500);
