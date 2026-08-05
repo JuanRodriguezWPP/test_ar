@@ -35,10 +35,25 @@ export async function initARScene(onLoadComplete, onProgress, instructionsCallba
   // UI overlay param
   const uiContainer = document.getElementById('ui-container');
 
-  document.body.appendChild(ARButton.createButton(renderer, {
+  const arButton = ARButton.createButton(renderer, {
     optionalFeatures: ['dom-overlay', 'hit-test'],
     domOverlay: { root: uiContainer }
-  }));
+  });
+
+  arButton.addEventListener('click', () => {
+    // Timeout para verificar si la sesión realmente arranca o se queda bloqueada
+    setTimeout(() => {
+      if (!renderer.xr.isPresenting) {
+        alert("ERROR: El navegador intentó abrir la cámara pero falló o fue bloqueado. Revisa si hay permisos pendientes o si ARCore está fallando.");
+      }
+    }, 3000);
+  });
+
+  renderer.xr.addEventListener('sessionstart', () => {
+    alert("Sesión WebXR iniciada correctamente en el navegador.");
+  });
+
+  document.body.appendChild(arButton);
 
   // Loading models
   const manager = new THREE.LoadingManager();
