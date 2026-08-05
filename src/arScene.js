@@ -42,15 +42,44 @@ export async function initARScene(onLoadComplete, onProgress, instructionsCallba
 
   arButton.addEventListener('click', () => {
     // Timeout para verificar si la sesión realmente arranca o se queda bloqueada
-    setTimeout(() => {
+    setTimeout(async () => {
       if (!renderer.xr.isPresenting) {
-        alert("ERROR: El navegador intentó abrir la cámara pero falló o fue bloqueado. Revisa si hay permisos pendientes o si ARCore está fallando.");
+        alert("Tu dispositivo o navegador bloqueó el acceso a la cámara AR. Activando el visor 3D Inmersivo de respaldo...");
+        
+        // Limpiar basura del AR fallido
+        arButton.style.display = 'none';
+        uiContainer.style.display = 'none';
+        renderer.dispose();
+        if(container.parentNode) {
+            document.body.removeChild(container);
+        }
+
+        // Importar y ejecutar el visor 3D clásico (OrbitControls)
+        document.getElementById('overlay').style.display = 'flex';
+        document.getElementById('overlay-text').innerText = "Cargando visor 3D interactivo...";
+        document.getElementById('loader').style.display = 'flex';
+        document.getElementById('start-btn').style.display = 'none';
+
+        try {
+            const { initFallbackScene } = await import('./fallbackOrbit.js');
+            initFallbackScene(
+                () => {
+                    document.getElementById('overlay').style.display = 'none';
+                },
+                (progress) => {
+                    document.getElementById('loader-text').innerText = `Cargando... ${Math.round(progress)}%`;
+                }
+            );
+        } catch (e) {
+            console.error("Error cargando fallback:", e);
+        }
       }
-    }, 3000);
+    }, 3500);
   });
 
   renderer.xr.addEventListener('sessionstart', () => {
-    alert("Sesión WebXR iniciada correctamente en el navegador.");
+    // Si inicia bien, quitamos el loader por si acaso
+    document.getElementById('loader').style.display = 'none';
   });
 
   document.body.appendChild(arButton);
