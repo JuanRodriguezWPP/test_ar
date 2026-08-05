@@ -1,22 +1,24 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DeviceOrientationControls } from './DeviceOrientationControls.js';
 
 let camera, scene, renderer, controls;
+let cameraVelocity = 0; // velocidad hacia adelante/atrás
+const MOVE_SPEED = 0.04;
+const DECELERATION = 0.92;
 
 export async function initFallbackScene(onLoadComplete, onProgress, instructionsCallback) {
-  // Siempre manejar el caso de que instructionsCallback no exista
   const setInstructions = instructionsCallback || (() => {});
 
-  // --- Crear el canvas y la escena PRIMERO, ANTES de ocultar el overlay ---
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1a2e);
+  scene.fog = new THREE.Fog(0x1a1a2e, 20, 60);
 
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
-  camera.position.set(0, 2, 8);
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+  camera.position.set(0, 1.6, 8); // Altura de ojos
 
-  // Iluminación rica
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+  // Iluminación
+  const hemi = new THREE.HemisphereLight(0xffeedd, 0x222233, 1.5);
   scene.add(hemi);
   const dirLight = new THREE.DirectionalLight(0xfff5e1, 2);
   dirLight.position.set(5, 10, 5);
@@ -25,52 +27,90 @@ export async function initFallbackScene(onLoadComplete, onProgress, instructions
   fillLight.position.set(-5, 5, -5);
   scene.add(fillLight);
 
-  // Cuadrícula en el suelo
-  const gridHelper = new THREE.GridHelper(30, 30, 0x333355, 0x222233);
+  // Suelo
+  const floorGeo = new THREE.PlaneGeometry(100, 100);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x111122 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+  const gridHelper = new THREE.GridHelper(100, 50, 0x333355, 0x222233);
   scene.add(gridHelper);
 
-  // Crear el renderer con fondo opaco (nunca transparent en fallback)
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-
-  // Agregar el canvas al body INMEDIATAMENTE, antes de esconder el overlay
   renderer.domElement.style.position = 'fixed';
   renderer.domElement.style.top = '0';
   renderer.domElement.style.left = '0';
-  renderer.domElement.style.zIndex = '0'; // Detrás del overlay
+  renderer.domElement.style.zIndex = '0';
   document.body.appendChild(renderer.domElement);
 
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 1, 0);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.minDistance = 1;
-  controls.maxDistance = 30;
-  controls.update();
+  // DeviceOrientationControls para giroscopio (mirar alrededor)
+  controls = new DeviceOrientationControls(camera);
 
-  // Lanzar el render loop INMEDIATAMENTE para que el canvas no se vea negro
+  // Acelerómetro para moverse adelante/atrás
+  let lastAccelY = 0;
+  const handleMotion = (event) => {
+    const accel = event.acceleration || event.accelerationIncludingGravity;
+    if (!accel) return;
+    // En eje Y del acelerómetro: inclinación del teléfono hacia adelante/atrás
+    const ay = accel.y || 0;
+    const delta = ay - lastAccelY;
+    lastAccelY = ay;
+    // Filtro de ruido: solo reaccionar a movimientos significativos
+    if (Math.abs(delta) > 0.3) {
+      cameraVelocity += delta * 0.015;
+      // Limitar velocidad máxima
+      cameraVelocity = Math.max(-0.15, Math.min(0.15, cameraVelocity));
+    }
+  };
+
+  // En iOS necesitamos pedir permiso para DeviceMotion
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    // iOS 13+
+    DeviceMotionEvent.requestPermission()
+      .then(permissionState => {
+        if (permissionState === 'granted') {
+          window.addEventListener('devicemotion', handleMotion);
+        }
+      })
+      .catch(console.error);
+  } else {
+    // Android y otros
+    window.addEventListener('devicemotion', handleMotion);
+  }
+
+  // Fallback táctil: swipe vertical para moverse adelante/atrás
+  let touchStartY = null;
+  renderer.domElement.addEventListener('touchstart', (e) => {
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  renderer.domElement.addEventListener('touchmove', (e) => {
+    if (touchStartY === null) return;
+    const dy = touchStartY - e.touches[0].clientY;
+    cameraVelocity += dy * 0.0005;
+    cameraVelocity = Math.max(-0.15, Math.min(0.15, cameraVelocity));
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  renderer.domElement.addEventListener('touchend', () => {
+    touchStartY = null;
+  }, { passive: true });
+
   renderer.setAnimationLoop(render);
 
-  // Cargar el modelo de Dia de Muertos directamente (sin pasar por la lógica del portal)
+  // Cargar el modelo
   const loader = new GLTFLoader();
-
   try {
     onProgress(10);
-
     const gltf = await loader.loadAsync('/models/Dia_de_Muertos.glb',
       (event) => {
         if (event.total > 0) {
-          const pct = 10 + (event.loaded / event.total) * 85;
-          onProgress(pct);
+          onProgress(10 + (event.loaded / event.total) * 85);
         }
       }
     );
 
     const model = gltf.scene;
-
-    // Centrar y ajustar el modelo al suelo
     const bbox = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3();
     bbox.getSize(size);
@@ -80,36 +120,27 @@ export async function initFallbackScene(onLoadComplete, onProgress, instructions
     model.position.x = -center.x;
     model.position.y = -bbox.min.y;
     model.position.z = -center.z;
-
     scene.add(model);
 
-    // Ajustar la cámara para encuadrar el modelo perfectamente
+    // Posicionar la cámara a buena distancia frente al modelo
     const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = camera.fov * (Math.PI / 180);
-    let camDist = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-    camDist *= 1.5; // Margen
-    camera.position.set(0, size.y * 0.5, Math.min(camDist, 30));
-    controls.target.set(0, size.y * 0.4, 0);
-    controls.update();
+    camera.position.set(0, size.y * 0.5, maxDim * 1.8);
 
     onProgress(100);
-
-    // Ahora sí ocultar el overlay (el canvas ya está renderizando)
     onLoadComplete();
-    setInstructions('Arrastra para girar • Pellizca para hacer zoom');
+    setInstructions('Mueve el teléfono para mirar · Inclina para avanzar/retroceder');
 
   } catch (err) {
-    console.error('Error cargando modelo en fallback:', err);
-
-    // Si falla el modelo, mostrar al menos una escena funcional con geometría básica
-    const boxGeo = new THREE.BoxGeometry(2, 2, 2);
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0xff8c00 });
-    const box = new THREE.Mesh(boxGeo, boxMat);
+    console.error('Error cargando modelo:', err);
+    // Escena de respaldo con geometría básica
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 2, 2),
+      new THREE.MeshStandardMaterial({ color: 0xff8c00 })
+    );
     box.position.y = 1;
     scene.add(box);
-
     onLoadComplete();
-    setInstructions('Error cargando modelo. Arrastra para girar.');
+    setInstructions('Mueve el teléfono para mirar alrededor');
   }
 
   window.addEventListener('resize', onWindowResize);
@@ -124,6 +155,19 @@ function onWindowResize() {
 
 function render() {
   if (!renderer || !scene || !camera) return;
-  controls.update();
+
+  if (controls) controls.update();
+
+  // Mover la cámara hacia donde está mirando
+  if (Math.abs(cameraVelocity) > 0.0005) {
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    // Solo mover en XZ (no hacia arriba/abajo)
+    direction.y = 0;
+    direction.normalize();
+    camera.position.addScaledVector(direction, cameraVelocity * MOVE_SPEED * 60);
+    cameraVelocity *= DECELERATION; // Desacelerar suavemente
+  }
+
   renderer.render(scene, camera);
 }
