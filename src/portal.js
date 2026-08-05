@@ -1,218 +1,201 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-let portalGroup = null;
-const stencilRef = 1;
+const STENCIL_REF = 1;
+const DOOR_W = 1.4;  // metros de ancho de la puerta
+const DOOR_H = 2.2;  // metros de alto de la puerta
 
-export async function loadPortalAssets(manager) {
-  const loader = new GLTFLoader(manager);
+/**
+ * buildPortalGroup:
+ * Crea el grupo completo del portal:
+ *  - Marco físico (fallback geométrico si portal_frame.glb no existe)
+ *  - Plano stencil (ventana invisible)
+ *  - Habitación interior + modelo Dia_de_Muertos.glb
+ */
+export async function buildPortalGroup(loader) {
+  const group = new THREE.Group();
 
+  // 1. Marco del portal (geometría básica si no hay .glb)
+  const frame = await loadFrame(loader);
+  group.add(frame);
+
+  // 2. Plano Stencil - La "ventana" invisible que define lo que se ve adentro
+  const stencilMesh = createStencilPlane();
+  group.add(stencilMesh);
+
+  // 3. Contenedor interior (habitación + modelo)
+  const interior = await buildInterior(loader);
+  group.add(interior);
+
+  // 4. Función pública para activar/desactivar el efecto estilo portal
+  group.userData.setStencil = (enabled) => {
+    applyStencil(interior, enabled);
+    frame.visible   = enabled;
+    stencilMesh.visible = enabled;
+  };
+
+  return group;
+}
+
+// ─── Marco del portal ─────────────────────────────────────────
+async function loadFrame(loader) {
   try {
-    const [frameGltf, interiorGltf] = await Promise.all([
-      loader.loadAsync('/models/portal_frame.glb').catch(() => {
-        console.warn("No portal_frame.glb found, using dummy");
-        return { scene: createDummyFrame() };
-      }),
-      loader.loadAsync('/models/Dia_de_Muertos.glb').catch(() => {
-        console.warn("No Dia_de_Muertos.glb found, using dummy");
-        return { scene: createDummyInterior() };
-      })
-    ]);
-    
-    portalGroup = new THREE.Group();
-    
-    // 1. Marco exterior
-    const frame = frameGltf.scene;
-    portalGroup.add(frame);
-    
-    // 2. Plano Stencil (La ventana invisible)
-    const stencilGeometry = new THREE.PlaneGeometry(1.2, 2.0); 
-    const stencilMaterial = new THREE.MeshBasicMaterial({
-      colorWrite: false, 
-      depthWrite: false, 
+    const gltf = await loader.loadAsync('/models/portal_frame.glb');
+    return gltf.scene;
+  } catch {
+    // Fallback geométrico: tres barras que forman un marco de puerta
+    return buildFrameGeometry();
+  }
+}
+
+function buildFrameGeometry() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.6, metalness: 0.2 });
+  const T = 0.12; // grosor del marco
+
+  // Barra izquierda
+  const left = new THREE.Mesh(new THREE.BoxGeometry(T, DOOR_H + T, T), mat);
+  left.position.set(-(DOOR_W / 2 + T / 2), DOOR_H / 2, 0);
+
+  // Barra derecha
+  const right = left.clone();
+  right.position.set(DOOR_W / 2 + T / 2, DOOR_H / 2, 0);
+
+  // Barra superior
+  const top = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + T * 2, T, T), mat);
+  top.position.set(0, DOOR_H + T / 2, 0);
+
+  g.add(left, right, top);
+  return g;
+}
+
+// ─── Plano Stencil ────────────────────────────────────────────
+function createStencilPlane() {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(DOOR_W, DOOR_H),
+    new THREE.MeshBasicMaterial({
+      colorWrite:   false,
+      depthWrite:   false,
       stencilWrite: true,
-      stencilRef: stencilRef,
-      stencilFunc: THREE.AlwaysStencilFunc,
-      stencilZPass: THREE.ReplaceStencilOp
-    });
-    
-    const stencilMesh = new THREE.Mesh(stencilGeometry, stencilMaterial);
-    stencilMesh.position.set(0, 1.0, 0); // Centro de la puerta
-    portalGroup.add(stencilMesh);
+      stencilRef:   STENCIL_REF,
+      stencilFunc:  THREE.AlwaysStencilFunc,
+      stencilZPass: THREE.ReplaceStencilOp,
+    })
+  );
+  mesh.position.set(0, DOOR_H / 2, 0);
+  return mesh;
+}
 
-    // 3. Crear el Contenedor Interior (Habitación + Dia de Muertos)
-    const interiorContainer = new THREE.Group();
-    
-    // Preparar el modelo de Dia de Muertos y calcular su tamaño real
-    const diaDeMuertos = interiorGltf.scene;
-    
-    // Calcular el Bounding Box (caja delimitadora) del modelo
-    const bbox = new THREE.Box3().setFromObject(diaDeMuertos);
-    const size = new THREE.Vector3();
-    bbox.getSize(size);
-    const center = new THREE.Vector3();
-    bbox.getCenter(center);
+// ─── Interior: habitación + modelo ────────────────────────────
+async function buildInterior(loader) {
+  const container = new THREE.Group();
 
-    // Añadir un margen (padding) de 2 metros alrededor del modelo para que la pared no lo toque
-    const roomWidth = Math.max(size.x + 4, 4);  // Mínimo 4m de ancho
-    const roomHeight = Math.max(size.y + 2, 3); // Mínimo 3m de alto
-    const roomDepth = Math.max(size.z + 4, 4);  // Mínimo 4m de fondo
-
-    // Crear el "Cubo" a la medida exacta del modelo
-    const room = createRoom(roomWidth, roomHeight, roomDepth);
-    interiorContainer.add(room);
-
-    // Centrar el modelo de Dia de Muertos perfectamente dentro del cuarto
-    // Movemos el modelo restando su centro original para que su punto 0,0,0 quede en el centro de masa.
-    // Luego lo colocamos en el centro de la habitación: X=0, Y=piso, Z=mitad de la habitación
-    diaDeMuertos.position.x = -center.x; 
-    diaDeMuertos.position.y = -bbox.min.y; // Para que toque exactamente el suelo de la habitación
-    diaDeMuertos.position.z = -center.z - (roomDepth / 2); // Centro de la habitación en profundidad
-    
-    interiorContainer.add(diaDeMuertos);
-
-    // Aplicar lógica Stencil a TODO lo que está dentro del contenedor interior
-    interiorContainer.traverse((child) => {
-      if (child.isMesh) {
-        if (Array.isArray(child.material)) {
-          child.material.forEach(mat => setupStencilForMaterial(mat));
-        } else {
-          setupStencilForMaterial(child.material);
-        }
-      }
-    });
-    
-    // Posicionar el contenedor interior un pelín detrás para evitar glitch visual con el stencil
-    interiorContainer.position.set(0, 0, -0.05); 
-    portalGroup.add(interiorContainer);
-    
-    return portalGroup;
-  } catch (error) {
-    console.error("Error loading portal assets:", error);
-    throw error;
+  // Cargar el modelo
+  let model = null;
+  try {
+    const gltf = await loader.loadAsync('/models/Dia_de_Muertos.glb');
+    model = gltf.scene;
+  } catch (e) {
+    console.warn('Dia_de_Muertos.glb no encontrado, usando cubo de prueba');
+    model = createDummyModel();
   }
+
+  // Calcular bounding box del modelo para ajustar la habitación
+  const bbox = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  bbox.getSize(size);
+  bbox.getCenter(center);
+
+  // Dimensiones de la habitación: modelo + margen
+  const rW = Math.max(size.x + 5, DOOR_W + 2);
+  const rH = Math.max(size.y + 2, DOOR_H + 1);
+  const rD = Math.max(size.z + 5, 6);
+
+  // Centrar modelo en la habitación
+  model.position.set(-center.x, -bbox.min.y, -center.z - rD / 2);
+  container.add(model);
+
+  // Construir la habitación
+  const room = buildRoom(rW, rH, rD);
+  container.add(room);
+
+  // Aplicar stencil a todo el interior
+  applyStencil(container, true);
+
+  container.position.z = -0.02; // Evitar z-fighting con el plano stencil
+
+  return container;
 }
 
-function setupStencilForMaterial(mat) {
-  // Asegurar que use colores por ambos lados para las paredes de la habitación
-  if (mat.side === THREE.FrontSide) mat.side = THREE.DoubleSide; 
-  
-  mat.stencilWrite = true;
-  mat.stencilRef = stencilRef;
-  mat.stencilFunc = THREE.EqualStencilFunc;
-  mat.stencilFail = THREE.KeepStencilOp;
-  mat.stencilZFail = THREE.KeepStencilOp;
-  mat.stencilZPass = THREE.KeepStencilOp;
-}
+// ─── Habitación ───────────────────────────────────────────────
+function buildRoom(W, H, D) {
+  const g = new THREE.Group();
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, side: THREE.BackSide, roughness: 0.9 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x0d0d1a, side: THREE.BackSide, roughness: 1.0 });
 
-export function setInteriorStencil(enabled) {
-  if (!portalGroup) return;
-  // El interiorContainer es el índice 2
-  const interior = portalGroup.children[2]; 
-  
-  if(interior) {
-    interior.traverse((child) => {
-      if (child.isMesh) {
-        if (Array.isArray(child.material)) {
-          child.material.forEach(mat => mat.stencilWrite = enabled);
-        } else {
-          child.material.stencilWrite = enabled;
-        }
-      }
-    });
-  }
-  
-  portalGroup.children[0].visible = enabled; // marco exterior
-  portalGroup.children[1].visible = enabled; // plano stencil
-}
-
-// ---- Funciones para construir la geometría ----
-
-function createRoom(roomWidth, roomHeight, roomDepth) {
-  const roomGroup = new THREE.Group();
-  // Material de las paredes (gris oscuro)
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x222222, side: THREE.DoubleSide });
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x111111, side: THREE.DoubleSide });
-
-  // El centro de la habitación en Z estará en -roomDepth/2
-  const zCenter = -roomDepth / 2;
-
-  // Pared Trasera
-  const back = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomHeight), wallMat);
-  back.position.set(0, roomHeight/2, -roomDepth);
-  roomGroup.add(back);
-
-  // Pared Izquierda
-  const left = new THREE.Mesh(new THREE.PlaneGeometry(roomDepth, roomHeight), wallMat);
-  left.rotation.y = Math.PI / 2;
-  left.position.set(-roomWidth/2, roomHeight/2, zCenter);
-  roomGroup.add(left);
-
-  // Pared Derecha
-  const right = new THREE.Mesh(new THREE.PlaneGeometry(roomDepth, roomHeight), wallMat);
-  right.rotation.y = -Math.PI / 2;
-  right.position.set(roomWidth/2, roomHeight/2, zCenter);
-  roomGroup.add(right);
-
-  // Techo
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomDepth), wallMat);
-  ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.set(0, roomHeight, zCenter);
-  roomGroup.add(ceiling);
+  const zC = -D / 2; // Centro en Z de la habitación
 
   // Suelo
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomDepth), floorMat);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.set(0, 0, zCenter);
-  roomGroup.add(floor);
+  addPlane(g, W, D, floorMat, [0, 0, zC], [-Math.PI / 2, 0, 0]);
 
-  // Pared Frontal (con el hueco de la puerta)
-  // Puerta: Ancho 1.2, Alto 2.0 (centrada en X=0)
-  const doorWidth = 1.2;
-  const doorHeight = 2.0;
+  // Techo
+  addPlane(g, W, D, wallMat, [0, H, zC], [Math.PI / 2, 0, 0]);
 
-  // Pieza izquierda del frontal
-  const frontLeftWidth = (roomWidth - doorWidth) / 2;
-  const frontLeft = new THREE.Mesh(new THREE.PlaneGeometry(frontLeftWidth, roomHeight), wallMat);
-  frontLeft.position.set(-doorWidth/2 - frontLeftWidth/2, roomHeight/2, 0);
-  roomGroup.add(frontLeft);
+  // Pared trasera
+  addPlane(g, W, H, wallMat, [0, H / 2, -D], [0, 0, 0]);
 
-  // Pieza derecha del frontal
-  const frontRightWidth = (roomWidth - doorWidth) / 2;
-  const frontRight = new THREE.Mesh(new THREE.PlaneGeometry(frontRightWidth, roomHeight), wallMat);
-  frontRight.position.set(doorWidth/2 + frontRightWidth/2, roomHeight/2, 0);
-  roomGroup.add(frontRight);
+  // Pared izquierda
+  addPlane(g, D, H, wallMat, [-W / 2, H / 2, zC], [0, Math.PI / 2, 0]);
 
-  // Pieza superior del frontal (arriba de la puerta)
-  const frontTopHeight = roomHeight - doorHeight;
-  if(frontTopHeight > 0) {
-    const frontTop = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, frontTopHeight), wallMat);
-    frontTop.position.set(0, doorHeight + frontTopHeight/2, 0);
-    roomGroup.add(frontTop);
+  // Pared derecha
+  addPlane(g, D, H, wallMat, [W / 2, H / 2, zC], [0, -Math.PI / 2, 0]);
+
+  // Pared frontal - 3 piezas (dejando hueco de la puerta al centro)
+  const sideW = (W - DOOR_W) / 2;
+  // Pieza izquierda
+  addPlane(g, sideW, H, wallMat, [-(DOOR_W / 2 + sideW / 2), H / 2, 0], [0, Math.PI, 0]);
+  // Pieza derecha
+  addPlane(g, sideW, H, wallMat, [(DOOR_W / 2 + sideW / 2), H / 2, 0], [0, Math.PI, 0]);
+  // Pieza superior (sobre la puerta)
+  const topH = H - DOOR_H;
+  if (topH > 0) {
+    addPlane(g, DOOR_W, topH, wallMat, [0, DOOR_H + topH / 2, 0], [0, Math.PI, 0]);
   }
 
-  return roomGroup;
+  return g;
 }
 
-function createDummyFrame() {
-  const group = new THREE.Group();
-  // Marco físico para la puerta en Z=0
-  const left = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.2, 0.1), new THREE.MeshStandardMaterial({color:0x333333}));
-  left.position.set(-0.65, 1.1, 0);
-  const right = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.2, 0.1), new THREE.MeshStandardMaterial({color:0x333333}));
-  right.position.set(0.65, 1.1, 0);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.1), new THREE.MeshStandardMaterial({color:0x333333}));
-  top.position.set(0, 2.25, 0);
-  group.add(left, right, top);
-  return group;
+function addPlane(parent, w, h, mat, pos, rot) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  m.position.set(...pos);
+  m.rotation.set(...rot);
+  parent.add(m);
 }
 
-function createDummyInterior() {
-  const group = new THREE.Group();
-  const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-  const boxMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-  const boxMesh = new THREE.Mesh(boxGeom, boxMat);
-  boxMesh.position.set(0, 0.5, 0);
-  group.add(boxMesh);
-  return group;
+// ─── Stencil ──────────────────────────────────────────────────
+function applyStencil(obj, enabled) {
+  obj.traverse(child => {
+    if (!child.isMesh) return;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    mats.forEach(mat => {
+      mat.stencilWrite = enabled;
+      mat.stencilRef   = STENCIL_REF;
+      mat.stencilFunc  = enabled ? THREE.EqualStencilFunc : THREE.AlwaysStencilFunc;
+      mat.stencilFail  = THREE.KeepStencilOp;
+      mat.stencilZFail = THREE.KeepStencilOp;
+      mat.stencilZPass = THREE.KeepStencilOp;
+    });
+  });
+}
+
+// ─── Dummy model ──────────────────────────────────────────────
+function createDummyModel() {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0xff6600 })
+  );
+  m.position.y = 0.5;
+  g.add(m);
+  return g;
 }
