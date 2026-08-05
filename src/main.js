@@ -1,306 +1,291 @@
 import * as THREE from 'three';
-import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// ─── UI Elements ──────────────────────────────────────────────
-const splash       = document.getElementById('splash');
-const statusEl     = document.getElementById('splash-status');
-const spinner      = document.getElementById('spinner');
-const btnStart     = document.getElementById('btn-start');
-const errorBox     = document.getElementById('error-box');
-const hud          = document.getElementById('hud');
+// ═══════════════════════════════════════════════════════════════
+// UI refs
+// ═══════════════════════════════════════════════════════════════
+const splash    = document.getElementById('splash');
+const statusEl  = document.getElementById('status-text');
+const spinner   = document.getElementById('spinner');
+const btnOpen   = document.getElementById('btn-open');
+const errorMsg  = document.getElementById('error-msg');
+const hud       = document.getElementById('hud');
+const btnPlace  = document.getElementById('btn-place');
+const cameraBg  = document.getElementById('camera-bg');
 
-// ─── Three.js globals ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// Three.js state
+// ═══════════════════════════════════════════════════════════════
 let renderer, scene, camera;
-let reticle, portalGroup;
-let hitTestSource = null;
-let hitTestRequested = false;
+let portalGroup = null;
 let portalPlaced = false;
-let isInsidePortal = false;
+let insidePortal = false;
 
-// ─── Step 1: Check support on load ────────────────────────────
-async function init() {
-  setStatus('Verificando compatibilidad con AR...');
-  spinner.classList.add('active');
+// Orientación del dispositivo
+const deviceQuat = new THREE.Quaternion();
+const _euler     = new THREE.Euler();
+// Corrección para pantalla vertical (Three.js camera mira hacia -Z pero
+// el teléfono en vertical natural mira hacia el frente con beta≈90)
+const _corrQ     = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const _screenQ   = new THREE.Quaternion();
+const _zAxis     = new THREE.Vector3(0, 0, 1);
+let orientationActive = false;
 
-  if (!navigator.xr) {
-    showError('Tu navegador no soporta WebXR. Usa Google Chrome en Android.');
-    return;
-  }
+// ═══════════════════════════════════════════════════════════════
+// INICIO
+// ═══════════════════════════════════════════════════════════════
+showStatus('Listo para comenzar');
+btnOpen.style.display = 'block';
+btnOpen.addEventListener('click', launch, { once: true });
 
-  try {
-    const supported = await navigator.xr.isSessionSupported('immersive-ar');
-    if (!supported) {
-      showError(
-        'Este dispositivo no soporta AR. Asegúrate de tener ARCore instalado desde la Play Store y usa Google Chrome.'
-      );
+// ═══════════════════════════════════════════════════════════════
+// PASO 1 – Pedir permisos y abrir cámara
+// ═══════════════════════════════════════════════════════════════
+async function launch() {
+  btnOpen.style.display = 'none';
+  showStatus('Solicitando acceso a la cámara...');
+  spinOn();
+
+  // ── Pedir permiso de orientación (obligatorio en iOS 13+) ──
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const res = await DeviceOrientationEvent.requestPermission();
+      if (res !== 'granted') {
+        showError('Se necesita permiso de orientación del dispositivo para girar la vista.\nVe a Ajustes > Safari > Movimiento y orientación y actívalo.');
+        return;
+      }
+    } catch (e) {
+      showError(`Error de permiso de orientación: ${e.message}`);
       return;
     }
+  }
+
+  // ── Abrir cámara trasera ───────────────────────────────────
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },   // cámara trasera
+        width:  { ideal: window.innerWidth },
+        height: { ideal: window.innerHeight }
+      },
+      audio: false
+    });
   } catch (e) {
-    showError(`Error verificando soporte AR: ${e.message}`);
+    showError(
+      `No se pudo acceder a la cámara.\n\nError: ${e.name}\n${e.message}\n\n` +
+      `Soluciones:\n• Acepta el permiso de cámara cuando el navegador lo pida.\n` +
+      `• Verifica que el sitio esté en HTTPS.\n` +
+      `• En Ajustes del teléfono, asegúrate de que Chrome/Safari tenga permiso de cámara.`
+    );
     return;
   }
 
-  // Dispositivo compatible: mostrar botón
-  spinner.classList.remove('active');
-  setStatus('¡Dispositivo compatible con AR!');
-  btnStart.style.display = 'block';
-  btnStart.addEventListener('click', startAR);
+  // Conectar stream al video
+  cameraBg.srcObject = stream;
+  cameraBg.style.display = 'block';
+  await new Promise(r => { cameraBg.onloadedmetadata = r; });
+
+  // ── Inicializar Three.js ────────────────────────────────────
+  initThree();
+
+  // ── Escuchar orientación del dispositivo ───────────────────
+  window.addEventListener('deviceorientation', onOrientation, true);
+
+  // ── Ocultar splash ─────────────────────────────────────────
+  spinOff();
+  splash.style.display = 'none';
+  hud.style.display = 'block';
+  btnPlace.style.display = 'block';
+
+  // ── Cargar portal 3D ───────────────────────────────────────
+  showHud('Cargando modelos...');
+  await loadPortal();
+  showHud('Mueve el teléfono y toca "Colocar portal" para anclarlo');
+
+  // ── Botón de colocar portal ────────────────────────────────
+  btnPlace.addEventListener('click', placePortal, { once: true });
+
+  // ── Arrancar render loop ───────────────────────────────────
+  renderer.setAnimationLoop(renderLoop);
 }
 
-// ─── Step 2: User taps "Abrir Cámara AR" ──────────────────────
-async function startAR() {
-  btnStart.style.display = 'none';
-  setStatus('Iniciando cámara...');
-  spinner.classList.add('active');
-
-  // Crear renderer con alpha=true (transparencia para ver la cámara)
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+// ═══════════════════════════════════════════════════════════════
+// Three.js setup
+// ═══════════════════════════════════════════════════════════════
+function initThree() {
+  renderer = new THREE.WebGLRenderer({
+    antialias:  true,
+    alpha:      true,    // fondo transparente → se ve el video debajo
+    stencil:    true,    // necesario para el efecto portal
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.xr.enabled = true;
+  renderer.setClearColor(0x000000, 0);   // fondo 100% transparente
+  renderer.autoClear = false;            // limpiar manualmente (necesario para stencil)
   document.body.appendChild(renderer.domElement);
+  renderer.domElement.style.display = 'block';
 
-  // Crear escena
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 200);
 
-  // Iluminación
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1));
-  const dir = new THREE.DirectionalLight(0xffffff, 1);
-  dir.position.set(1, 3, 2);
-  scene.add(dir);
-
-  // Reticle para indicar donde se colocará el portal
-  reticle = new THREE.Mesh(
-    new THREE.RingGeometry(0.12, 0.16, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8 })
+  camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.01, 100
   );
-  reticle.matrixAutoUpdate = false;
-  reticle.visible = false;
-  scene.add(reticle);
+  scene.add(camera);
 
-  // Intentar abrir la sesión AR con Fallback progresivo
-  try {
-    let session;
-    const arOverlay = document.getElementById('ar-overlay');
-    arOverlay.style.display = 'block';
+  // Luces
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444466, 1.2);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+  sun.position.set(2, 5, 3);
+  scene.add(sun);
 
-    try {
-      // Intento 1: Con overlay y hit-test
-      session = await navigator.xr.requestSession('immersive-ar', {
-        optionalFeatures: ['hit-test', 'dom-overlay'],
-        domOverlay: { root: arOverlay }
-      });
-    } catch (err1) {
-      console.warn("Intento 1 falló:", err1);
-      // Intento 2: Sesión AR pura sin configuraciones adicionales
-      arOverlay.style.display = 'none'; // ocultar overlay ya que no será soportado
-      session = await navigator.xr.requestSession('immersive-ar');
-      setHud = () => {}; // Desactivar actualizaciones de HUD ya que no hay overlay
-    }
-
-    // Sesión iniciada: ocultar splash
-    splash.style.display = 'none';
-    if (arOverlay.style.display === 'block') {
-      hud.style.display = 'block';
-    }
-
-    await renderer.xr.setSession(session);
-    session.addEventListener('end', onSessionEnd);
-
-    // Tap para colocar el portal
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', onSelect);
-    scene.add(controller);
-
-    // Cargar modelos en paralelo
-    setHud('Cargando modelos...');
-    await loadAssets();
-
-    setHud('Apunta al piso para colocar el portal');
-    renderer.setAnimationLoop(renderLoop);
-
-  } catch (err) {
-    // Mostrar el error REAL del navegador al usuario
-    renderer.dispose();
-    document.body.removeChild(renderer.domElement);
-    spinner.classList.remove('active');
-    showError(
-      `No se pudo abrir la cámara AR.\n\nError del sistema: ${err.name} - ${err.message}\n\nSoluciones:\n` +
-      `• Verifica que tienes "Servicios de Google Play para RA (ARCore)" instalados desde la Play Store.\n` +
-      `• Asegúrate de estar usando Google Chrome (no otro navegador).\n` +
-      `• El sitio debe abrirse en HTTPS (✓ Netlify lo cumple).`
-    );
-    btnStart.textContent = 'Reintentar';
-    btnStart.style.display = 'block';
-    btnStart.addEventListener('click', () => location.reload());
-  }
+  window.addEventListener('resize', onResize);
 }
 
-// ─── Cargar el GLB de la escena interior ──────────────────────
-async function loadAssets() {
-  const loader = new GLTFLoader();
+// ═══════════════════════════════════════════════════════════════
+// Giroscopio → cámara Three.js
+// ═══════════════════════════════════════════════════════════════
+function onOrientation(e) {
+  if (e.alpha === null) return;  // algunos dispositivos dan null
+  orientationActive = true;
 
-  // Construir la habitación con stencil + el modelo Dia de Muertos
+  const alpha  = THREE.MathUtils.degToRad(e.alpha  ?? 0);
+  const beta   = THREE.MathUtils.degToRad(e.beta   ?? 0);
+  const gamma  = THREE.MathUtils.degToRad(e.gamma  ?? 0);
+
+  // Orientación del screen (landscape/portrait)
+  const orient = THREE.MathUtils.degToRad(
+    window.screen?.orientation?.angle ?? window.orientation ?? 0
+  );
+
+  // Construir quaternion de orientación del dispositivo
+  _euler.set(beta, alpha, -gamma, 'YXZ');
+  deviceQuat.setFromEuler(_euler);
+  deviceQuat.multiply(_corrQ);
+  _screenQ.setFromAxisAngle(_zAxis, -orient);
+  deviceQuat.multiply(_screenQ);
+
+  camera.quaternion.copy(deviceQuat);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Cargar portal 3D
+// ═══════════════════════════════════════════════════════════════
+async function loadPortal() {
+  const loader = new GLTFLoader();
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
 }
 
-let hitTestSupported = true; // asume verdadero hasta que falle
+// ═══════════════════════════════════════════════════════════════
+// Colocar portal (fijarlo 2.5m adelante de donde mira el teléfono)
+// ═══════════════════════════════════════════════════════════════
+function placePortal() {
+  if (!portalGroup || portalPlaced) return;
 
-// ─── Tap en pantalla: colocar el portal ───────────────────────
-function onSelect() {
-  if (portalPlaced) return;
+  // Dirección hacia donde mira la cámara en ese momento
+  const dir = new THREE.Vector3(0, 0, -1);
+  dir.applyQuaternion(camera.quaternion);
+  dir.y = 0;          // mantener en plano horizontal
+  dir.normalize();
 
-  if (hitTestSupported && !reticle.visible) {
-    // Si soporta hit-test pero aún no detecta el piso, no hacer nada
-    return;
-  }
+  // Posición de la cámara (en escena 3D la cámara está en el origen)
+  const origin = new THREE.Vector3(0, 0, 0);
+  const camPos = new THREE.Vector3();
+  camera.getWorldPosition(camPos);
 
-  if (hitTestSupported && reticle.visible) {
-    // Colocar donde diga el reticle (piso real)
-    portalGroup.position.setFromMatrixPosition(reticle.matrix);
-  } else {
-    // FALLBACK: Si no soporta hit-test, colocarlo 2 metros adelante de la cámara
-    const camPos = new THREE.Vector3();
-    const camDir = new THREE.Vector3();
-    camera.getWorldPosition(camPos);
-    camera.getWorldDirection(camDir);
-    camDir.y = 0; // mantenerlo a la altura de la cámara, pero plano
-    camDir.normalize();
-    
-    portalGroup.position.copy(camPos).add(camDir.multiplyScalar(2.0));
-    // Bajarlo un poco simulando el suelo
-    portalGroup.position.y -= 1.0; 
-  }
+  // Colocar a 2.5m adelante, "en el suelo"
+  portalGroup.position.copy(camPos).addScaledVector(dir, 2.5);
+  portalGroup.position.y = -1.5; // simular altura del suelo (aprox 1.5m abajo)
 
-  // Rotar el portal para que mire a la cámara
-  const camP = new THREE.Vector3();
-  camera.getWorldPosition(camP);
-  portalGroup.lookAt(camP.x, portalGroup.position.y, camP.z);
+  // Que el portal mire de vuelta a la cámara
+  const lookAt = new THREE.Vector3(camPos.x, portalGroup.position.y, camPos.z);
+  portalGroup.lookAt(lookAt);
 
   scene.add(portalGroup);
   portalPlaced = true;
-  reticle.visible = false;
-  setHud('Camina hacia el portal para entrar');
+  btnPlace.style.display = 'none';
+  showHud('Acércate al portal para entrar');
 }
 
-// ─── Render loop de WebXR ─────────────────────────────────────
-function renderLoop(timestamp, frame) {
-  if (!frame) return;
-
-  const refSpace = renderer.xr.getReferenceSpace();
-  const session  = renderer.xr.getSession();
-
-  // Hit-test para el reticle
-  if (!portalPlaced && hitTestSupported) {
-    if (!hitTestRequested) {
-      session.requestReferenceSpace('viewer').then(vs => {
-        session.requestHitTestSource({ space: vs }).then(src => {
-          hitTestSource = src;
-        }).catch(err => {
-          // El teléfono no soporta Hit-Test
-          hitTestSupported = false;
-          setHud('Toca la pantalla para colocar el portal (Modo básico)');
-        });
-      });
-      session.addEventListener('end', () => {
-        hitTestRequested = false;
-        hitTestSource = null;
-      });
-      hitTestRequested = true;
-    }
-
-    if (hitTestSource) {
-      const hits = frame.getHitTestResults(hitTestSource);
-      if (hits.length > 0) {
-        reticle.visible = true;
-        reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix);
-      } else {
-        reticle.visible = false;
-      }
-    }
+// ═══════════════════════════════════════════════════════════════
+// Render loop
+// ═══════════════════════════════════════════════════════════════
+function renderLoop() {
+  // Si el giroscopio no disparó eventos aún, dar un toque suave de balanceo
+  if (!orientationActive) {
+    const t = performance.now() * 0.001;
+    camera.rotation.set(
+      Math.sin(t * 0.3) * 0.02,
+      Math.sin(t * 0.2) * 0.04,
+      0
+    );
   }
 
-  // Detectar si usuario cruzó el portal
-  if (portalPlaced && portalGroup) {
-    detectCrossing();
-  }
+  // Limpiar: color + depth + stencil
+  renderer.clear(true, true, true);
+
+  // Detectar cruce del portal si ya fue colocado
+  if (portalPlaced && portalGroup) checkCrossing();
 
   renderer.render(scene, camera);
 }
 
-// ─── Detección de cruce del portal ────────────────────────────
-const _camPos    = new THREE.Vector3();
-const _portalPos = new THREE.Vector3();
-const _forward   = new THREE.Vector3();
-const _toPortal  = new THREE.Vector3();
+// ═══════════════════════════════════════════════════════════════
+// Detección de cruce del portal
+// ═══════════════════════════════════════════════════════════════
+const _cp = new THREE.Vector3();
+const _pp = new THREE.Vector3();
+const _fw = new THREE.Vector3();
+const _tp = new THREE.Vector3();
 
-function detectCrossing() {
-  camera.getWorldPosition(_camPos);
-  portalGroup.getWorldPosition(_portalPos);
-  portalGroup.getWorldDirection(_forward);
-  _toPortal.subVectors(_camPos, _portalPos);
+function checkCrossing() {
+  camera.getWorldPosition(_cp);
+  portalGroup.getWorldPosition(_pp);
+  portalGroup.getWorldDirection(_fw);
+  _tp.subVectors(_cp, _pp);
 
-  const dot  = _toPortal.dot(_forward);
-  const dist = _camPos.distanceTo(_portalPos);
+  const inside = (_tp.dot(_fw) < 0) && (_cp.distanceTo(_pp) < 3.0);
 
-  const nowInside = dot < 0 && dist < 3.0;
-
-  if (nowInside && !isInsidePortal) {
-    isInsidePortal = true;
-    onEnter();
-  } else if (!nowInside && isInsidePortal) {
-    isInsidePortal = false;
-    onExit();
+  if (inside && !insidePortal) {
+    insidePortal = true;
+    if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(false);
+    showHud('Dentro del portal · Retrocede para salir');
+  } else if (!inside && insidePortal) {
+    insidePortal = false;
+    if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(true);
+    showHud('Acércate al portal para entrar');
   }
 }
 
-function onEnter() {
-  // Quitar el stencil: el usuario ve el interior a pantalla completa
-  if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(false);
-  setHud('Estás dentro del portal · Retrocede para salir');
-}
-
-function onExit() {
-  // Restaurar stencil
-  if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(true);
-  setHud('Camina hacia el portal para entrar');
-}
-
-// ─── Fin de sesión AR ─────────────────────────────────────────
-function onSessionEnd() {
-  splash.style.display = 'flex';
-  hud.style.display = 'none';
-  setStatus('Sesión AR terminada. Pulsa para volver a intentarlo.');
-  btnStart.textContent = 'Reabrir Cámara AR';
-  btnStart.style.display = 'block';
-  hitTestRequested = false;
-  hitTestSource = null;
-  portalPlaced = false;
-  isInsidePortal = false;
-}
-
-// ─── Helpers UI ───────────────────────────────────────────────
-function setStatus(msg) { statusEl.textContent = msg; }
-
-function setHud(msg) { hud.textContent = msg; }
-
-function showError(msg) {
-  spinner.classList.remove('active');
-  setStatus('');
-  errorBox.style.display = 'block';
-  errorBox.textContent = msg;
-}
-
+// ═══════════════════════════════════════════════════════════════
 // Resize
-window.addEventListener('resize', () => {
+// ═══════════════════════════════════════════════════════════════
+function onResize() {
   if (!camera || !renderer) return;
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-});
+}
 
-// Arrancar
-init();
+// ═══════════════════════════════════════════════════════════════
+// Helpers UI
+// ═══════════════════════════════════════════════════════════════
+function showStatus(msg) { statusEl.textContent = msg; }
+function showHud(msg)    { hud.textContent = msg; }
+function spinOn()        { spinner.classList.add('on'); }
+function spinOff()       { spinner.classList.remove('on'); }
+function showError(msg) {
+  spinOff();
+  showStatus('');
+  errorMsg.style.display = 'block';
+  errorMsg.textContent = msg;
+  btnOpen.textContent = 'Reintentar';
+  btnOpen.style.display = 'block';
+  btnOpen.addEventListener('click', () => location.reload(), { once: true });
+}

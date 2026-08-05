@@ -1,45 +1,57 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Portal WebAR</title>
+  <title>Portal AR</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    body {
+    html, body {
+      width: 100%; height: 100%;
       overflow: hidden;
-      font-family: -apple-system, 'Roboto', sans-serif;
       background: #000;
+      font-family: -apple-system, 'Roboto', sans-serif;
       color: #fff;
-      width: 100vw;
-      height: 100vh;
     }
 
-    /* Pantalla de inicio */
+    /* ── Video de cámara (fondo) ─────────────────────────── */
+    #camera-bg {
+      position: fixed;
+      inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      z-index: 0;
+      display: none;        /* se muestra al abrir la cámara */
+    }
+
+    /* ── Canvas Three.js (encima del video, transparente) ── */
+    canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      display: none;        /* se muestra cuando está listo */
+    }
+
+    /* ── Pantalla de inicio ──────────────────────────────── */
     #splash {
       position: fixed;
       inset: 0;
+      z-index: 100;
       background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a1a0a 100%);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      z-index: 100;
-      gap: 24px;
+      gap: 28px;
       padding: 40px;
       text-align: center;
     }
 
     #splash h1 {
-      font-size: 2.2rem;
-      font-weight: 700;
-      background: linear-gradient(90deg, #00ff88, #00cc66);
+      font-size: 2.4rem;
+      font-weight: 800;
+      background: linear-gradient(90deg, #00ff88, #00ccff);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -47,107 +59,115 @@
 
     #splash p {
       font-size: 1rem;
-      color: rgba(255, 255, 255, 0.7);
-      max-width: 320px;
-      line-height: 1.5;
+      color: rgba(255,255,255,0.65);
+      max-width: 300px;
+      line-height: 1.6;
     }
 
-    #splash-status {
+    #status-text {
       font-size: 0.9rem;
-      color: rgba(255, 255, 255, 0.5);
-      min-height: 24px;
+      color: rgba(255,255,255,0.5);
+      min-height: 20px;
     }
 
-    /* Spinner */
     .spinner {
-      width: 48px;
-      height: 48px;
-      border: 4px solid rgba(255, 255, 255, 0.15);
+      width: 44px; height: 44px;
+      border: 4px solid rgba(255,255,255,0.1);
       border-top-color: #00ff88;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.75s linear infinite;
       display: none;
     }
+    .spinner.on { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-    .spinner.active {
-      display: block;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
-
-    /* Botón principal */
-    #btn-start {
-      padding: 18px 48px;
+    #btn-open {
+      padding: 18px 52px;
       background: linear-gradient(135deg, #00704A, #00ff88);
-      color: white;
+      color: #fff;
       border: none;
       border-radius: 50px;
       font-size: 1.2rem;
       font-weight: 700;
       cursor: pointer;
       display: none;
-      box-shadow: 0 8px 32px rgba(0, 255, 136, 0.3);
-      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 8px 32px rgba(0,255,136,0.35);
+      transition: transform 0.15s;
     }
+    #btn-open:active { transform: scale(0.95); }
 
-    #btn-start:active {
-      transform: scale(0.96);
-      box-shadow: 0 4px 16px rgba(0, 255, 136, 0.2);
-    }
-
-    /* Error */
-    #error-box {
+    #error-msg {
       display: none;
-      background: rgba(255, 60, 60, 0.15);
-      border: 1px solid rgba(255, 60, 60, 0.4);
-      border-radius: 12px;
+      background: rgba(255,60,60,0.12);
+      border: 1px solid rgba(255,80,80,0.35);
+      border-radius: 14px;
       padding: 16px 20px;
       font-size: 0.85rem;
-      color: #ff9999;
+      color: #ffaaaa;
       max-width: 340px;
-      text-align: left;
+      white-space: pre-wrap;
       line-height: 1.5;
+      text-align: left;
     }
 
-    /* HUD en AR */
+    /* ── HUD de instrucciones ────────────────────────────── */
     #hud {
       position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      padding: 20px;
+      bottom: 0; left: 0; right: 0;
+      z-index: 10;
+      padding: 22px 20px;
       text-align: center;
-      font-size: 1rem;
+      font-size: 1.05rem;
       font-weight: 600;
-      background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
-      z-index: 50;
+      background: linear-gradient(transparent, rgba(0,0,0,0.65));
       display: none;
       pointer-events: none;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
     }
+
+    /* ── Botón de colocar portal ─────────────────────────── */
+    #btn-place {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 16px 40px;
+      background: rgba(0, 255, 136, 0.2);
+      border: 2px solid #00ff88;
+      border-radius: 50px;
+      color: #00ff88;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: none;
+      backdrop-filter: blur(6px);
+      transition: background 0.2s;
+    }
+    #btn-place:active { background: rgba(0,255,136,0.4); }
   </style>
 </head>
-
 <body>
+
+  <!-- Fondo: video de la cámara real -->
+  <video id="camera-bg" autoplay playsinline muted></video>
 
   <!-- Pantalla de inicio -->
   <div id="splash">
-    <h1>Portal test 26</h1>
-    <p id="splash-status">Verificando compatibilidad...</p>
+    <h1>Portal AR</h1>
+    <p>Abre tu cámara y toca la pantalla para colocar un portal a otro mundo</p>
+    <p id="status-text">Listo para comenzar</p>
     <div class="spinner" id="spinner"></div>
-    <button id="btn-start">Abrir Cámara AR</button>
-    <div id="error-box"></div>
+    <button id="btn-open">Abrir Cámara</button>
+    <div id="error-msg"></div>
   </div>
 
-  <!-- Overlay exclusivo para AR -->
-  <div id="ar-overlay" style="display: none;">
-    <div id="hud">Apunta al piso para colocar el portal</div>
-  </div>
+  <!-- Instrucciones en pantalla durante AR -->
+  <div id="hud">Mueve el teléfono y toca para colocar el portal</div>
+
+  <!-- Botón flotante para colocar portal -->
+  <button id="btn-place">📍 Colocar portal aquí</button>
 
   <script type="module" src="/src/main.js"></script>
 </body>
-
 </html>
