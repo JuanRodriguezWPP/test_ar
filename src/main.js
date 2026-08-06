@@ -240,7 +240,7 @@ function onStep() {
   if (touchIntent === 'bwd') return; // si retrocediendo con toque, ignorar pasos
 
   stepCount++;
-  portalOffset = Math.min(portalOffset + STEP_MOVE, 2.9);
+  portalOffset = Math.min(portalOffset + STEP_MOVE, 4.0);
   applyPortalOffset(); // actualizar posición inmediatamente
 }
 
@@ -313,7 +313,7 @@ function renderLoop(ts) {
     // Aplicar velocidad del toque al offset
     if (Math.abs(moveVel) > 0.001) {
       const newOffset = portalOffset + moveVel * dt;
-      const clamped   = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 2.9);
+      const clamped   = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 4.0);
       if (clamped !== portalOffset) {
         portalOffset = clamped;
         applyPortalOffset();
