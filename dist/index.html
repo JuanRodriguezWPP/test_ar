@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Portal AR</title>
+  <title>Portal AR – McCORMICK</title>
   <style>
     * {
       margin: 0;
@@ -31,7 +31,6 @@
       object-fit: cover;
       z-index: 0;
       display: none;
-      /* se muestra al abrir la cámara */
     }
 
     /* ── Canvas Three.js (encima del video, transparente) ── */
@@ -40,7 +39,6 @@
       inset: 0;
       z-index: 1;
       display: none;
-      /* se muestra cuando está listo */
     }
 
     /* ── Pantalla de inicio ──────────────────────────────── */
@@ -48,74 +46,97 @@
       position: fixed;
       inset: 0;
       z-index: 100;
-      background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a1a0a 100%);
-      display: flex;
+      cursor: pointer;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #splash-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      pointer-events: none;
+    }
+
+    /* Indicador de tap animado */
+    #splash-tap {
+      position: absolute;
+      bottom: 60px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      animation: pulse-up 2s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    #splash-tap p {
+      display: inline-block;
+      color: #fff;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.95);
+      background: rgba(0, 0, 0, 0.45);
+      padding: 10px 28px;
+      border-radius: 50px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(4px);
+    }
+
+    @keyframes pulse-up {
+      0%, 100% { opacity: 0.7; transform: translateY(0); }
+      50%       { opacity: 1;   transform: translateY(-8px); }
+    }
+
+    /* Spinner que aparece AL INICIO DE LA CARGA (se superpone al splash) */
+    #splash-loading {
+      position: absolute;
+      inset: 0;
+      display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 28px;
-      padding: 40px;
-      text-align: center;
+      gap: 16px;
+      background: rgba(0, 0, 0, 0.7);
     }
 
-    #splash h1 {
-      font-size: 2.4rem;
-      font-weight: 800;
-      background: linear-gradient(90deg, #00ff88, #00ccff);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    #splash p {
-      font-size: 1rem;
-      color: rgba(255, 255, 255, 0.65);
-      max-width: 300px;
-      line-height: 1.6;
+    #splash-loading.on {
+      display: flex;
     }
 
     #status-text {
-      font-size: 0.9rem;
-      color: rgba(255, 255, 255, 0.5);
-      min-height: 20px;
+      font-size: 0.95rem;
+      color: rgba(255, 255, 255, 0.75);
+      letter-spacing: 0.05em;
     }
 
     .spinner {
       width: 44px;
       height: 44px;
       border: 4px solid rgba(255, 255, 255, 0.1);
-      border-top-color: #00ff88;
+      border-top-color: #fff;
       border-radius: 50%;
       animation: spin 0.75s linear infinite;
-      display: none;
-    }
-
-    .spinner.on {
-      display: block;
     }
 
     @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
+      to { transform: rotate(360deg); }
     }
 
+    /* Botón de reintento (solo en error) */
     #btn-open {
-      padding: 18px 52px;
-      background: linear-gradient(135deg, #00704A, #00ff88);
-      color: #fff;
-      border: none;
+      display: none;
+      padding: 14px 40px;
+      background: rgba(255, 80, 80, 0.25);
+      border: 2px solid rgba(255, 80, 80, 0.6);
       border-radius: 50px;
-      font-size: 1.2rem;
+      color: #ffaaaa;
+      font-size: 1rem;
       font-weight: 700;
       cursor: pointer;
-      display: none;
-      box-shadow: 0 8px 32px rgba(0, 255, 136, 0.35);
-      transition: transform 0.15s;
-    }
-
-    #btn-open:active {
-      transform: scale(0.95);
+      margin-top: 12px;
     }
 
     #error-msg {
@@ -130,6 +151,7 @@
       white-space: pre-wrap;
       line-height: 1.5;
       text-align: left;
+      margin: 0 20px;
     }
 
     /* ── HUD de instrucciones ────────────────────────────── */
@@ -157,23 +179,24 @@
       transform: translateX(-50%);
       z-index: 20;
       padding: 16px 40px;
-      background: rgba(0, 255, 136, 0.2);
-      border: 2px solid #00ff88;
+      background: rgba(139, 0, 0, 0.35);
+      border: 2px solid rgba(255, 80, 80, 0.7);
       border-radius: 50px;
-      color: #00ff88;
+      color: #fff;
       font-size: 1rem;
       font-weight: 700;
       cursor: pointer;
       display: none;
       backdrop-filter: blur(6px);
       transition: background 0.2s;
+      letter-spacing: 0.08em;
     }
 
     #btn-place:active {
-      background: rgba(0, 255, 136, 0.4);
+      background: rgba(139, 0, 0, 0.6);
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-B5wxWBU9.js"></script>
+  <script type="module" crossorigin src="/assets/index-D-8LOFxj.js"></script>
 </head>
 
 <body>
@@ -181,14 +204,22 @@
   <!-- Fondo: video de la cámara real -->
   <video id="camera-bg" autoplay playsinline muted></video>
 
-  <!-- Pantalla de inicio -->
+  <!-- Pantalla de inicio: Start.jpg a pantalla completa -->
   <div id="splash">
-    <h1>AR TEST 53</h1>
-    <p>Abre tu cámara y toca la pantalla para colocar un portal a otro mundo</p>
-    <p id="status-text">Listo para comenzar</p>
-    <div class="spinner" id="spinner"></div>
-    <button id="btn-open">Abrir Cámara</button>
-    <div id="error-msg"></div>
+    <img id="splash-img" src="/models/Start.jpg" alt="McCORMICK AR Experience" />
+
+    <!-- Indicador animado de tap -->
+    <div id="splash-tap">
+      <p>✦ Toca para comenzar ✦</p>
+    </div>
+
+    <!-- Capa de carga (se muestra al hacer tap) -->
+    <div id="splash-loading">
+      <div class="spinner"></div>
+      <p id="status-text">Iniciando experiencia...</p>
+      <div id="error-msg"></div>
+      <button id="btn-open">Reintentar</button>
+    </div>
   </div>
 
   <!-- Instrucciones en pantalla durante AR -->

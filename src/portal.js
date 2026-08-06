@@ -1,36 +1,56 @@
 import * as THREE from 'three';
 
 const STENCIL_REF = 1;
-const DOOR_W = 1.4;  // metros de ancho de la puerta
-const DOOR_H = 2.2;  // metros de alto de la puerta
+const DOOR_W = 1.8;   // metros ancho puerta
+const DOOR_H = 3.0;   // metros alto  puerta
 
 /**
  * buildPortalGroup:
- * Crea el grupo completo del portal:
- *  - Marco físico (fallback geométrico si portal_frame.glb no existe)
- *  - Plano stencil (ventana invisible)
- *  - Habitación interior + modelo Dia_de_Muertos.glb
+ *  - Marco físico con label "McCORMICK"
+ *  - Plano stencil (ventana invisible que define lo que se ve adentro)
+ *  - Esfera 360° con la imagen panorámica (con stencil al inicio)
+ *  - Modelo Paprika 1.glb flotando AFUERA de la puerta (sin stencil)
  */
 export async function buildPortalGroup(loader) {
   const group = new THREE.Group();
+  let paprikaMesh   = null;
+  const paprikaBaseY = 1.2; // altura de flotación del modelo
 
-  // 1. Marco del portal (geometría básica si no hay .glb)
+  // 1. Marco del portal
   const frame = await loadFrame(loader);
   group.add(frame);
 
-  // 2. Plano Stencil - La "ventana" invisible que define lo que se ve adentro
+  // 2. Plano stencil – "ventana" invisible
   const stencilMesh = createStencilPlane();
+  stencilMesh.renderOrder = 0;
   group.add(stencilMesh);
 
-  // 3. Contenedor interior (habitación + modelo)
-  const interior = await buildInterior(loader);
+  // 3. Esfera 360 interior (solo visible a través de la puerta gracias al stencil)
+  const interior = buildInterior();
   group.add(interior);
 
-  // 4. Función pública para activar/desactivar el efecto estilo portal
+  // 4. Páprika dentro del portal (oculta hasta cruzar)
+  paprikaMesh = await loadPaprika(loader);
+  if (paprikaMesh) {
+    paprikaMesh.position.set(0, paprikaBaseY, -3); // dentro del mundo 360
+    paprikaMesh.visible = false; // oculta hasta que el usuario entre
+    group.add(paprikaMesh);
+  }
+
+  // ── API pública ───────────────────────────────────────────────
   group.userData.setStencil = (enabled) => {
-    applyStencil(interior, enabled);
-    frame.visible   = enabled;
+    applyStencil(interior, enabled);      // enabled=true → solo por el hueco; false → todo el espacio
     stencilMesh.visible = enabled;
+    // La Páprika aparece SOLO cuando se entra al portal
+    if (paprikaMesh) paprikaMesh.visible = !enabled;
+  };
+
+  // Animación de flotación de la Páprika (llamar desde renderLoop)
+  group.userData.tick = (ts) => {
+    if (paprikaMesh) {
+      paprikaMesh.position.y = paprikaBaseY + Math.sin(ts * 0.0015) * 0.18;
+      paprikaMesh.rotation.y += 0.006;
+    }
   };
 
   return group;
@@ -38,34 +58,75 @@ export async function buildPortalGroup(loader) {
 
 // ─── Marco del portal ─────────────────────────────────────────
 async function loadFrame(loader) {
-  try {
-    const gltf = await loader.loadAsync('/models/portal_frame.glb');
-    return gltf.scene;
-  } catch {
-    // Fallback geométrico: tres barras que forman un marco de puerta
-    return buildFrameGeometry();
-  }
+  // Siempre construimos el marco personalizado de McCORMICK
+  return buildFrameGeometry();
 }
 
 function buildFrameGeometry() {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.6, metalness: 0.2 });
-  const T = 0.12; // grosor del marco
 
-  // Barra izquierda
-  const left = new THREE.Mesh(new THREE.BoxGeometry(T, DOOR_H + T, T), mat);
+  // Material oscuro tipo madera fina
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x1a0a00,
+    roughness: 0.35,
+    metalness: 0.45,
+  });
+
+  const T = 0.14; // grosor del marco
+
+  // Poste izquierdo
+  const left = new THREE.Mesh(new THREE.BoxGeometry(T, DOOR_H, T * 1.5), mat);
   left.position.set(-(DOOR_W / 2 + T / 2), DOOR_H / 2, 0);
 
-  // Barra derecha
+  // Poste derecho
   const right = left.clone();
   right.position.set(DOOR_W / 2 + T / 2, DOOR_H / 2, 0);
 
   // Barra superior
-  const top = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + T * 2, T, T), mat);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + T * 2, T, T * 1.5), mat);
   top.position.set(0, DOOR_H + T / 2, 0);
 
-  g.add(left, right, top);
+  // Label "McCORMICK" encima del marco
+  const label = createMcCormickLabel();
+
+  g.add(left, right, top, label);
   return g;
+}
+
+function createMcCormickLabel() {
+  // Crear textura con canvas
+  const canvas = document.createElement('canvas');
+  canvas.width  = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+
+  // Fondo rojo oscuro con bordes redondeados
+  ctx.fillStyle = '#8B0000';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, 512, 128, 18);
+  ctx.fill();
+
+  // Borde dorado
+  ctx.strokeStyle = '#C8A84B';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(3, 3, 506, 122, 15);
+  ctx.stroke();
+
+  // Texto principal
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font      = 'bold 62px Georgia, "Times New Roman", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('McCORMICK', 256, 64);
+
+  const tex  = new THREE.CanvasTexture(canvas);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(DOOR_W * 1.05, 0.38),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+  );
+  mesh.position.set(0, DOOR_H + 0.24, 0.02);
+  return mesh;
 }
 
 // ─── Plano Stencil ────────────────────────────────────────────
@@ -85,91 +146,64 @@ function createStencilPlane() {
   return mesh;
 }
 
-// ─── Interior: habitación + modelo ────────────────────────────
-async function buildInterior(loader) {
+// ─── Esfera 360° interior ─────────────────────────────────────
+function buildInterior() {
   const container = new THREE.Group();
 
-  // Cargar el modelo
-  let model = null;
-  try {
-    const gltf = await loader.loadAsync('/models/Lower_Dia_de_Muertos.glb');
-    model = gltf.scene;
-  } catch (e) {
-    console.warn('Lower_Dia_de_Muertos.glb no encontrado, usando cubo de prueba');
-    model = createDummyModel();
-  }
+  // Cargar imagen panorámica equirectangular
+  const tex = new THREE.TextureLoader().load(
+    '/models/5cf0bbd5-866d-4750-a6dd-85134b96dd15.png',
+    () => { /* cargada OK */ },
+    undefined,
+    (e) => console.warn('Error cargando panorama 360:', e)
+  );
 
-  // Calcular bounding box del modelo para ajustar la habitación
-  const bbox = new THREE.Box3().setFromObject(model);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  bbox.getSize(size);
-  bbox.getCenter(center);
+  // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.repeat.x = -1;
 
-  // Dimensiones de la habitación: modelo + margen
-  const rW = Math.max(size.x + 5, DOOR_W + 2);
-  const rH = Math.max(size.y + 2, DOOR_H + 1);
-  const rD = Math.max(size.z + 5, 6);
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(50, 64, 40),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
+  );
+  sphere.renderOrder = 2;
+  container.add(sphere);
 
-  // Centrar modelo en la habitación
-  model.position.set(-center.x, -bbox.min.y, -center.z - rD / 2);
-  container.add(model);
-
-  // Construir la habitación
-  const room = buildRoom(rW, rH, rD);
-  container.add(room);
-
-  // Aplicar stencil a todo el interior
+  // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  container.position.z = -0.02; // Evitar z-fighting con el plano stencil
+  // Ligero offset para no competir con el plano stencil en el Z-buffer
+  container.position.z = -0.02;
+  container.renderOrder = 2;
 
   return container;
 }
 
-// ─── Habitación ───────────────────────────────────────────────
-function buildRoom(W, H, D) {
-  const g = new THREE.Group();
-  const wallMat  = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, side: THREE.BackSide, roughness: 0.9 });
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x0d0d1a, side: THREE.BackSide, roughness: 1.0 });
+// ─── Modelo Páprika ───────────────────────────────────────────
+async function loadPaprika(loader) {
+  try {
+    const gltf = await loader.loadAsync('/models/Paprika 1.glb');
+    const model = gltf.scene;
 
-  const zC = -D / 2; // Centro en Z de la habitación
+    // Ajustar escala para que se vea bien al lado de la puerta
+    const bbox = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const targetH = 1.0; // queremos ~1 metro de alto
+    const s = targetH / maxDim;
+    model.scale.set(s, s, s);
 
-  // Suelo
-  addPlane(g, W, D, floorMat, [0, 0, zC], [-Math.PI / 2, 0, 0]);
+    // Centrar horizontalmente en la base
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+    model.position.x = -center.x * s;
 
-  // Techo
-  addPlane(g, W, D, wallMat, [0, H, zC], [Math.PI / 2, 0, 0]);
-
-  // Pared trasera
-  addPlane(g, W, H, wallMat, [0, H / 2, -D], [0, 0, 0]);
-
-  // Pared izquierda
-  addPlane(g, D, H, wallMat, [-W / 2, H / 2, zC], [0, Math.PI / 2, 0]);
-
-  // Pared derecha
-  addPlane(g, D, H, wallMat, [W / 2, H / 2, zC], [0, -Math.PI / 2, 0]);
-
-  // Pared frontal - 3 piezas (dejando hueco de la puerta al centro)
-  const sideW = (W - DOOR_W) / 2;
-  // Pieza izquierda
-  addPlane(g, sideW, H, wallMat, [-(DOOR_W / 2 + sideW / 2), H / 2, 0], [0, Math.PI, 0]);
-  // Pieza derecha
-  addPlane(g, sideW, H, wallMat, [(DOOR_W / 2 + sideW / 2), H / 2, 0], [0, Math.PI, 0]);
-  // Pieza superior (sobre la puerta)
-  const topH = H - DOOR_H;
-  if (topH > 0) {
-    addPlane(g, DOOR_W, topH, wallMat, [0, DOOR_H + topH / 2, 0], [0, Math.PI, 0]);
+    return model;
+  } catch (e) {
+    console.warn('Paprika 1.glb no cargado:', e);
+    return null;
   }
-
-  return g;
-}
-
-function addPlane(parent, w, h, mat, pos, rot) {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-  m.position.set(...pos);
-  m.rotation.set(...rot);
-  parent.add(m);
 }
 
 // ─── Stencil ──────────────────────────────────────────────────
@@ -184,18 +218,7 @@ function applyStencil(obj, enabled) {
       mat.stencilFail  = THREE.KeepStencilOp;
       mat.stencilZFail = THREE.KeepStencilOp;
       mat.stencilZPass = THREE.KeepStencilOp;
+      mat.needsUpdate  = true;
     });
   });
-}
-
-// ─── Dummy model ──────────────────────────────────────────────
-function createDummyModel() {
-  const g = new THREE.Group();
-  const m = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0xff6600 })
-  );
-  m.position.y = 0.5;
-  g.add(m);
-  return g;
 }

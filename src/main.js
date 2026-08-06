@@ -4,14 +4,14 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ═══════════════════════════════════════════════════════════════
 // UI refs
 // ═══════════════════════════════════════════════════════════════
-const splash    = document.getElementById('splash');
-const statusEl  = document.getElementById('status-text');
-const spinner   = document.getElementById('spinner');
-const btnOpen   = document.getElementById('btn-open');
-const errorMsg  = document.getElementById('error-msg');
-const hud       = document.getElementById('hud');
-const btnPlace  = document.getElementById('btn-place');
-const cameraBg  = document.getElementById('camera-bg');
+const splash        = document.getElementById('splash');
+const splashLoading = document.getElementById('splash-loading');
+const statusEl      = document.getElementById('status-text');
+const btnOpen       = document.getElementById('btn-open');
+const errorMsg      = document.getElementById('error-msg');
+const hud           = document.getElementById('hud');
+const btnPlace      = document.getElementById('btn-place');
+const cameraBg      = document.getElementById('camera-bg');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
@@ -58,17 +58,16 @@ let stepCount   = 0;    // contador de pasos (para debug en HUD)
 // ═══════════════════════════════════════════════════════════════
 // INICIO
 // ═══════════════════════════════════════════════════════════════
-showStatus('Listo para comenzar');
-btnOpen.style.display = 'block';
-btnOpen.addEventListener('click', launch, { once: true });
+// Al tocar la pantalla de inicio se lanza la experiencia
+splash.addEventListener('click', () => launch(), { once: true });
 
 // ═══════════════════════════════════════════════════════════════
 // PASO 1 – Permisos + Cámara
 // ═══════════════════════════════════════════════════════════════
 async function launch() {
-  btnOpen.style.display = 'none';
+  // Mostrar overlay de carga sobre el splash
+  splashLoading.classList.add('on');
   showStatus('Solicitando permisos...');
-  spinOn();
 
   // iOS 13+: permisos de sensores (deben pedirse en gesture de usuario)
   for (const E of [DeviceOrientationEvent, DeviceMotionEvent]) {
@@ -112,14 +111,14 @@ async function launch() {
   setupTouch();
 
   // Mostrar experiencia
-  spinOff();
+  splashLoading.classList.remove('on');
   splash.style.display = 'none';
   hud.style.display    = 'block';
   btnPlace.style.display = 'block';
 
-  showHud('Cargando modelos...');
+  showHud('Cargando portal McCORMICK...');
   await loadPortal();
-  showHud('Pulsa el botón para colocar el portal delante de ti');
+  showHud('Pulsa el botón para colocar el portal frente a ti');
 
   btnPlace.addEventListener('click', placePortal, { once: true });
   renderer.setAnimationLoop(renderLoop);
@@ -266,23 +265,14 @@ const portalAxisDir   = new THREE.Vector3(); // dirección de "acercarse" = came
 function placePortal() {
   if (!portalGroup || portalPlaced) return;
 
-  // Dirección horizontal hacia donde apunta el teléfono
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
-  fwd.y = 0;
-  fwd.normalize();
-
-  // Colocar el portal 3m adelante
-  // Cámara está en el origen (0,0,0) → portal a 3m en la dirección de fwd
-  portalOrigin.set(fwd.x * 3.0, -1.0, fwd.z * 3.0);
-  // Dirección de acercamiento: de cámara al portal
-  portalAxisDir.copy(fwd);
+  // Siempre centrado directamente frente al usuario, sin importar
+  // la orientación actual del teléfono → la puerta siempre aparece al centro
+  portalOrigin.set(0, -1.0, -3.0);
+  portalAxisDir.set(0, 0, -1); // El portal se acerca moviéndose desde -3 hacia 0
 
   portalGroup.position.copy(portalOrigin);
 
-  // El portal mira de vuelta a la cámara (la apertura apunta hacia el usuario)
-  // lookAt en Three.js hace que +Z local apunte HACIA el target
-  // No - en Object3D, lookAt hace que -Z local apunte al target.
-  // Necesitamos que la apertura esté visible, así que miramos desde el portal hacia origen
+  // El portal siempre mira hacia la cámara (origen)
   portalGroup.lookAt(0, -1.0, 0);
 
   scene.add(portalGroup);
@@ -291,6 +281,7 @@ function placePortal() {
   btnPlace.style.display = 'none';
   showHud('Toca la mitad inferior de la pantalla para avanzar');
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // Render loop
@@ -304,6 +295,9 @@ function renderLoop(ts) {
     const t = ts * 0.001;
     camera.rotation.set(Math.sin(t * 0.3) * 0.015, Math.sin(t * 0.2) * 0.03, 0);
   }
+
+  // ── Animación de la Páprika (flotación + rotación) ──────────
+  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts);
 
   // ── Movimiento con toque (continuo mientras se mantiene) ────
   if (portalPlaced) {
@@ -376,13 +370,15 @@ function checkCrossing() {
 
 function onEnterPortal() {
   if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(false);
-  cameraBg.style.transition = 'opacity 0.6s ease';
-  cameraBg.style.opacity = '0.08';
-  showHud('¡Estás dentro! · Toca arriba para salir');
+  // Fade out cámara real → entorno 360 ocupa todo el espacio visual
+  cameraBg.style.transition = 'opacity 0.8s ease';
+  cameraBg.style.opacity = '0';
+  showHud('¡Bienvenido al mundo McCORMICK! · Toca arriba para salir');
 }
 
 function onExitPortal() {
   if (portalGroup.userData.setStencil) portalGroup.userData.setStencil(true);
+  // Restaurar cámara real al salir
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
   showHud('Toca abajo para avanzar al portal');
@@ -391,12 +387,10 @@ function onExitPortal() {
 // ═══════════════════════════════════════════════════════════════
 // Helpers UI
 // ═══════════════════════════════════════════════════════════════
-function showStatus(msg) { statusEl.textContent = msg; }
+function showStatus(msg) { if (statusEl) statusEl.textContent = msg; }
 function showHud(msg)    { hud.textContent = msg; }
-function spinOn()        { spinner.classList.add('on'); }
-function spinOff()       { spinner.classList.remove('on'); }
 function showError(msg) {
-  spinOff();
+  splashLoading.classList.add('on');
   showStatus('');
   errorMsg.style.display = 'block';
   errorMsg.textContent = msg;
