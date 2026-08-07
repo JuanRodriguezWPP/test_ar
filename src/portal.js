@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 const STENCIL_REF = 1;
-const DOOR_W = 2.8;   // Ajustado para que quepa en pantalla
-const DOOR_H = 2.5;   // Reducido ligeramente para no cortarse arriba
+const DOOR_W = 2.8;   // Restaurado al ancho anterior
+const DOOR_H = 2.5;   // Altura original
 
 /**
  * buildPortalGroup:
@@ -29,17 +29,11 @@ export async function buildPortalGroup(loader) {
   const interior = buildInterior();
   group.add(interior);
 
-  // 4. Páprika dentro del portal (movida a la derecha y profunda para forzar a buscarla)
+  // 4. Páprika dentro del portal (a la izquierda)
   paprikaMesh = await loadPaprika(loader);
   if (paprikaMesh) {
-    paprikaMesh.position.set(2.5, paprikaBaseY, -5.0); // A la derecha, lejos de la cara
+    paprikaMesh.position.set(-1.5, paprikaBaseY, -3.0); // A la izquierda, dentro del portal
     paprikaMesh.visible = false;
-
-    // Etiqueta de producto flotante
-    const productLabel = createProductLabel();
-    productLabel.position.set(0, 0.8, 0); // Arriba del producto
-    paprikaMesh.add(productLabel);
-
     group.add(paprikaMesh);
   }
 
@@ -47,6 +41,7 @@ export async function buildPortalGroup(loader) {
   group.userData.setStencil = (enabled) => {
     applyStencil(interior, enabled);      // enabled=true → solo por el hueco; false → todo el espacio
     stencilMesh.visible = enabled;
+    frame.visible = enabled; // Ocultar la puerta cuando estás adentro
     // La Páprika aparece SOLO cuando se entra al portal
     if (paprikaMesh) paprikaMesh.visible = !enabled;
   };
@@ -73,15 +68,15 @@ function createCheckeredTexture() {
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
   
-  // Colores del patrón
-  const colorRed = '#c24b3c';
-  const colorGreen = '#4c5c44';
+  // Colores del patrón (Rojo y Blanco)
+  const colorRed = '#d32f2f'; // Un rojo más vivo
+  const colorWhite = '#ffffff'; // Blanco
   
   ctx.fillStyle = colorRed;
   ctx.fillRect(0, 0, 256, 256);
   
-  ctx.fillStyle = colorGreen;
-  // Dibujar cuadros verdes para formar el patrón de ajedrez
+  ctx.fillStyle = colorWhite;
+  // Dibujar cuadros blancos para formar el patrón de ajedrez
   ctx.fillRect(0, 0, 128, 128);
   ctx.fillRect(128, 128, 128, 128);
   
@@ -131,50 +126,67 @@ function buildFrameGeometry() {
   topBeam.position.set(0, DOOR_H + 0.6, 0);
 
   // 2. VESTÍBULO (Paredes interiores que dan profundidad)
+  // Para evitar "Z-fighting" (parpadeo) con las columnas frontales que miden 0.2 de grosor (de +0.1 a -0.1 en Z),
+  // empezamos las paredes interiores exactamente en Z = -0.1
+  const INNER_DEPTH = DEPTH - 0.1;
+  const INNER_Z = -0.1 - (INNER_DEPTH / 2);
+  
   const wallTex = checkTex.clone();
-  wallTex.repeat.set(DEPTH, DOOR_H); // Ajustar repetición por tamaño
+  wallTex.repeat.set(INNER_DEPTH, DOOR_H); // Ajustar repetición por tamaño
   const wallMat = new THREE.MeshStandardMaterial({map: wallTex, roughness: 0.9});
 
   // Pared interior izquierda
-  const innerLeft = new THREE.Mesh(new THREE.PlaneGeometry(DEPTH, DOOR_H), wallMat);
+  const innerLeft = new THREE.Mesh(new THREE.PlaneGeometry(INNER_DEPTH, DOOR_H), wallMat);
   innerLeft.rotation.y = Math.PI / 2;
-  innerLeft.position.set(-DOOR_W / 2, DOOR_H / 2, -DEPTH / 2);
+  innerLeft.position.set(-DOOR_W / 2, DOOR_H / 2, INNER_Z);
 
   // Pared interior derecha
-  const innerRight = new THREE.Mesh(new THREE.PlaneGeometry(DEPTH, DOOR_H), wallMat);
+  const innerRight = new THREE.Mesh(new THREE.PlaneGeometry(INNER_DEPTH, DOOR_H), wallMat);
   innerRight.rotation.y = -Math.PI / 2;
-  innerRight.position.set(DOOR_W / 2, DOOR_H / 2, -DEPTH / 2);
+  innerRight.position.set(DOOR_W / 2, DOOR_H / 2, INNER_Z);
 
   // Techo interior
   const ceilTex = checkTex.clone();
-  ceilTex.repeat.set(DOOR_W, DEPTH);
+  ceilTex.repeat.set(DOOR_W, INNER_DEPTH);
   const ceilMat = new THREE.MeshStandardMaterial({map: ceilTex, roughness: 0.9});
-  const innerCeil = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, DEPTH), ceilMat);
+  const innerCeil = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, INNER_DEPTH), ceilMat);
   innerCeil.rotation.x = Math.PI / 2;
-  innerCeil.position.set(0, DOOR_H, -DEPTH / 2);
+  innerCeil.position.set(0, DOOR_H, INNER_Z);
   
-  // Piso interior (madera o sombra)
-  const floorMat = new THREE.MeshStandardMaterial({color: 0x3d2b1f, roughness: 1.0});
-  const innerFloor = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, DEPTH), floorMat);
-  innerFloor.rotation.x = -Math.PI / 2;
-  innerFloor.position.set(0, 0, -DEPTH / 2);
+  // (Piso interior café retirado a petición)
+  // En su lugar, colocamos un piso "invisible" que actúa como portal (stencil)
+  // para que la imagen 360 se pinte también sobre el piso del túnel y no se corte.
+  const floorStencilMat = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: false,
+    stencilWrite: true,
+    stencilRef: STENCIL_REF,
+    stencilFunc: THREE.AlwaysStencilFunc,
+    stencilZPass: THREE.ReplaceStencilOp,
+  });
+  const innerFloorStencil = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, INNER_DEPTH), floorStencilMat);
+  innerFloorStencil.rotation.x = -Math.PI / 2;
+  innerFloorStencil.position.set(0, 0, INNER_Z);
+  innerFloorStencil.renderOrder = 0;
 
-  // 3. PUERTAS ABIERTAS (Fijadas al final del vestíbulo)
+  // 3. PUERTAS ABIERTAS CON DISEÑO DE PANELES (Fijadas al final del vestíbulo)
   const doorGroupL = new THREE.Group();
   doorGroupL.position.set(-DOOR_W / 2, 0, -DEPTH);
   
-  const doorL = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2, DOOR_H, 0.08), doorMat);
-  doorL.position.set(DOOR_W / 4, DOOR_H / 2, 0); // Eje de rotación en el borde
+  const doorL = createDoorMesh(DOOR_W / 2, DOOR_H, doorMat);
+  doorL.position.set(DOOR_W / 4, 0, 0); // Eje de rotación en el borde izquierdo
   doorGroupL.add(doorL);
-  doorGroupL.rotation.y = Math.PI * 0.3; // Abierta hacia afuera (el usuario)
+  // Abierta hacia ADENTRO (hacia el 360). 
+  // 0.25 * PI = 45 grados (suficiente para verse claras y abiertas)
+  doorGroupL.rotation.y = -Math.PI * 0.25; 
 
   const doorGroupR = new THREE.Group();
   doorGroupR.position.set(DOOR_W / 2, 0, -DEPTH);
   
-  const doorR = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2, DOOR_H, 0.08), doorMat);
-  doorR.position.set(-DOOR_W / 4, DOOR_H / 2, 0);
+  const doorR = createDoorMesh(DOOR_W / 2, DOOR_H, doorMat);
+  doorR.position.set(-DOOR_W / 4, 0, 0); // Eje de rotación en el borde derecho
   doorGroupR.add(doorR);
-  doorGroupR.rotation.y = -Math.PI * 0.3; // Abierta hacia afuera
+  doorGroupR.rotation.y = Math.PI * 0.25; // Abierta hacia ADENTRO
 
   // Molduras doradas en el letrero superior
   const goldMat = new THREE.MeshStandardMaterial({color: 0xC8A84B, roughness: 0.2, metalness: 0.8});
@@ -183,54 +195,43 @@ function buildFrameGeometry() {
   const goldTrimBot = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2 + 0.1, 0.05, 0.25), goldMat);
   goldTrimBot.position.set(0, DOOR_H, 0.05);
 
-  // 4. EL MOÑO GIGANTE (Top Izquierda)
-  const bowGroup = createBow();
-  bowGroup.position.set(-(DOOR_W / 2 + COL_W / 2), DOOR_H + 0.6, 0.3);
-  
   // Label "McCORMICK"
   const label = createMcCormickLabel();
 
-  g.add(leftCol, rightCol, topBeam, innerLeft, innerRight, innerCeil, innerFloor, doorGroupL, doorGroupR, goldTrimTop, goldTrimBot, bowGroup, label);
+  g.add(leftCol, rightCol, topBeam, innerLeft, innerRight, innerCeil, innerFloorStencil, doorGroupL, doorGroupR, goldTrimTop, goldTrimBot, label);
   return g;
 }
 
-function createBow() {
-  const bow = new THREE.Group();
-  const bowMat = new THREE.MeshStandardMaterial({
-    color: 0x3d5c41, // Verde oscuro
-    roughness: 0.6,
-  });
+// Genera una puerta con diseño clásico de panel rebajado
+function createDoorMesh(w, h, mat) {
+  const g = new THREE.Group();
+  const fw = 0.18; // Grosor del marco lateral y superior
+  const bw = 0.30; // Grosor del zócalo inferior (más grueso)
+  const d = 0.08;  // Profundidad de la puerta
+  const pd = 0.02; // Profundidad del panel hundido
 
-  // Centro del moño
-  const center = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), bowMat);
-  center.scale.z = 0.5;
-  bow.add(center);
+  // Marco izquierdo
+  const left = new THREE.Mesh(new THREE.BoxGeometry(fw, h, d), mat);
+  left.position.set(-w/2 + fw/2, h/2, 0);
+  
+  // Marco derecho
+  const right = new THREE.Mesh(new THREE.BoxGeometry(fw, h, d), mat);
+  right.position.set(w/2 - fw/2, h/2, 0);
 
-  // Lazos del moño usando Torus
-  for (let i = 0; i < 6; i++) {
-    const loop = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.2, 16, 32), bowMat);
-    loop.rotation.z = (Math.PI / 3) * i;
-    loop.rotation.x = Math.PI / 6;
-    loop.position.x = Math.cos((Math.PI / 3) * i) * 0.4;
-    loop.position.y = Math.sin((Math.PI / 3) * i) * 0.4;
-    bow.add(loop);
-  }
-  
-  // Cintas colgando
-  const tailGeo = new THREE.PlaneGeometry(0.4, 2.0);
-  const tail1 = new THREE.Mesh(tailGeo, bowMat);
-  tail1.position.set(-0.3, -1.2, -0.1);
-  tail1.rotation.z = Math.PI / 12;
-  
-  const tail2 = new THREE.Mesh(tailGeo, bowMat);
-  tail2.position.set(0.3, -1.0, -0.2);
-  tail2.rotation.z = -Math.PI / 8;
-  
-  bow.add(tail1, tail2);
-  
-  // Escalar el moño en general
-  bow.scale.set(1.5, 1.5, 1.5);
-  return bow;
+  // Marco superior
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, fw, d), mat);
+  top.position.set(0, h - fw/2, 0);
+
+  // Marco inferior
+  const bot = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, bw, d), mat);
+  bot.position.set(0, bw/2, 0);
+
+  // Panel central hundido
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, h - fw - bw, pd), mat);
+  panel.position.set(0, bw + (h - fw - bw)/2, 0);
+
+  g.add(left, right, top, bot, panel);
+  return g;
 }
 
 function createMcCormickLabel() {
@@ -292,7 +293,7 @@ function buildInterior() {
 
   // Cargar imagen panorámica equirectangular
   const tex = new THREE.TextureLoader().load(
-    '/models/5cf0bbd5-866d-4750-a6dd-85134b96dd15.png',
+    '/models/04316f8b-befd-4514-838e-47017f48e32a.jpeg',
     () => { /* cargada OK */ },
     undefined,
     (e) => console.warn('Error cargando panorama 360:', e)
@@ -317,10 +318,19 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Mover la esfera hacia atrás. Entre más negativo sea este valor, más "lejos" y con
-  // menos zoom se verá la imagen desde la puerta. (Ej: -10, -20, -30).
-  // Límite máximo recomendado: -40 (porque la esfera tiene radio 50).
-  container.position.z = -40.0;
+  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
+  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
+  container.position.z = -2.0;
+  
+  // Para enfocar exactamente la zona de los tamales, la mesa y la alfombra (la parte de abajo de la imagen),
+  // tenemos que SUBIR la esfera. Al subir la esfera (números positivos), tu cámara queda abajo,
+  // mirando directamente hacia el suelo de la imagen. 
+  container.position.y = 20.0;
+  
+  // Escalar la esfera en el eje Z (profundidad) crea un efecto de "túnel" o pasillo largo.
+  // Esto aleja el altar (quita el zoom) pero mantiene el piso conectado a la puerta.
+  container.scale.set(1.2, 1.2, 2.5);
+  
   container.renderOrder = 2;
 
   return container;

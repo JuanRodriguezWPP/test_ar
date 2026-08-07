@@ -195,8 +195,64 @@
     #btn-place:active {
       background: rgba(139, 0, 0, 0.6);
     }
+
+    /* ── Tarjeta de producto (aparece al entrar al portal) ── */
+    #product-card {
+      position: fixed;
+      left: 20px;
+      top: 50%;
+      transform: translateY(-50%) translateX(-120%);
+      z-index: 30;
+      width: 170px;
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 20px;
+      padding: 18px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+    }
+
+    #product-card.visible {
+      transform: translateY(-50%) translateX(0);
+      pointer-events: auto;
+    }
+
+    #product-card .product-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      text-align: center;
+      color: #fff;
+      line-height: 1.25;
+    }
+
+    #product-card .cta-btn {
+      width: 100%;
+      padding: 13px 10px;
+      background: linear-gradient(135deg, #C8A84B, #e8c86a);
+      border: none;
+      border-radius: 12px;
+      color: #1a1100;
+      font-size: 0.85rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 4px 16px rgba(200,168,75,0.35);
+    }
+
+    #product-card .cta-btn:active {
+      transform: scale(0.96);
+      box-shadow: 0 2px 8px rgba(200,168,75,0.2);
+    }
   </style>
-  <script type="module" crossorigin src="/assets/index-BBD5PtqU.js"></script>
+  <script type="module" crossorigin src="/assets/index-B5625L2c.js"></script>
 </head>
 
 <body>
@@ -227,6 +283,12 @@
 
   <!-- Botón flotante para colocar portal -->
   <button id="btn-place">📍 Colocar portal aquí</button>
+
+  <!-- Tarjeta de producto (aparece al entrar al portal) -->
+  <div id="product-card">
+    <p class="product-title">Pimienta<br>McCORMICK</p>
+    <button class="cta-btn" onclick="window.open('https://www.mccormick.com.mx','_blank')">Adquiere Ahora</button>
+  </div>
 
 </body>
 

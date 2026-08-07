@@ -12,6 +12,7 @@ const errorMsg      = document.getElementById('error-msg');
 const hud           = document.getElementById('hud');
 const btnPlace      = document.getElementById('btn-place');
 const cameraBg      = document.getElementById('camera-bg');
+const productCard   = document.getElementById('product-card');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
@@ -141,7 +142,8 @@ function initThree() {
   scene = new THREE.Scene();
 
   // Cámara SIEMPRE en el origen — solo rota con giroscopio
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 100);
+  // Aumentamos el far plane a 1000 para que la habitación profunda no se recorte
+  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
   camera.position.set(0, 0, 0);
   scene.add(camera);
 
@@ -378,6 +380,8 @@ function onEnterPortal() {
   cameraBg.style.transition = 'opacity 0.8s ease';
   cameraBg.style.opacity = '0';
   showHud('¡Bienvenido al mundo McCORMICK! · Toca arriba para salir');
+  // Mostrar tarjeta de producto con animación
+  setTimeout(() => productCard.classList.add('visible'), 600);
 }
 
 function onExitPortal() {
@@ -386,6 +390,8 @@ function onExitPortal() {
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
   showHud('Toca abajo para avanzar al portal');
+  // Ocultar tarjeta de producto
+  productCard.classList.remove('visible');
 }
 
 // ═══════════════════════════════════════════════════════════════
