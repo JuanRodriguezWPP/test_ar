@@ -128,10 +128,10 @@ async function launch() {
 // Three.js setup
 // ═══════════════════════════════════════════════════════════════
 function initThree() {
-  // antialias: false mejora muchísimo el rendimiento en móviles
-  renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, stencil: true, powerPreference: 'high-performance' });
-  // Limitar el pixelRatio a 1.25 para evitar sobrecarga en pantallas 2K/3K de teléfonos
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+  // antialias: true suaviza los bordes dentados
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true, powerPreference: 'high-performance' });
+  // Aumentar el pixel ratio a 2 para pantallas HD de celulares (antes estaba en 1.25 que se ve muy pixelado)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0);
   renderer.autoClear = false;
@@ -265,10 +265,14 @@ const portalAxisDir   = new THREE.Vector3(); // dirección de "acercarse" = came
 function placePortal() {
   if (!portalGroup || portalPlaced) return;
 
-  // Siempre centrado directamente frente al usuario, sin importar
-  // la orientación actual del teléfono → la puerta siempre aparece al centro
-  portalOrigin.set(0, -1.0, -3.0);
-  portalAxisDir.set(0, 0, -1); // El portal se acerca moviéndose desde -3 hacia 0
+  // Dirección hacia donde apunta el teléfono AHORA
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
+  fwd.y = 0;
+  fwd.normalize();
+
+  // Colocar a 3m enfrente de la mirada actual
+  portalOrigin.set(fwd.x * 3.0, -1.0, fwd.z * 3.0);
+  portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
 
