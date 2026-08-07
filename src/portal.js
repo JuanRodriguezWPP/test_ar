@@ -64,86 +64,206 @@ export async function buildPortalGroup(loader) {
 
 // ─── Marco del portal ─────────────────────────────────────────
 async function loadFrame(loader) {
-  // Siempre construimos el marco personalizado de McCORMICK
   return buildFrameGeometry();
+}
+
+function createCheckeredTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  
+  // Colores del patrón
+  const colorRed = '#c24b3c';
+  const colorGreen = '#4c5c44';
+  
+  ctx.fillStyle = colorRed;
+  ctx.fillRect(0, 0, 256, 256);
+  
+  ctx.fillStyle = colorGreen;
+  // Dibujar cuadros verdes para formar el patrón de ajedrez
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.fillRect(128, 128, 128, 128);
+  
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function buildFrameGeometry() {
   const g = new THREE.Group();
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x1a0a00, roughness: 0.35, metalness: 0.45,
+  // Textura y Materiales
+  const checkTex = createCheckeredTexture();
+  checkTex.repeat.set(2, 4); // Repetición para las columnas frontales
+  
+  const facadeMat = new THREE.MeshStandardMaterial({
+    map: checkTex,
+    roughness: 0.8,
   });
-  const goldMat = new THREE.MeshStandardMaterial({
-    color: 0xC8A84B, roughness: 0.2, metalness: 0.8,
+  
+  const doorMat = new THREE.MeshStandardMaterial({
+    color: 0x333333, // Gris oscuro
+    roughness: 0.4,
+    metalness: 0.2
   });
 
-  const T = 0.2; // Grosor de los pilares principales
+  const DEPTH = 1.5; // Profundidad del portal
+  const COL_W = 1.0; // Ancho de las columnas frontales
 
-  // Pilar Izquierdo
-  const pL = new THREE.Mesh(new THREE.BoxGeometry(T, DOOR_H, T * 1.5), mat);
-  pL.position.set(-(DOOR_W / 2 + T / 2), DOOR_H / 2, 0);
-  // Base dorada izq
-  const bL = new THREE.Mesh(new THREE.BoxGeometry(T * 1.2, 0.1, T * 1.7), goldMat);
-  bL.position.set(0, -DOOR_H / 2 + 0.05, 0);
-  pL.add(bL);
-  // Capitel dorado izq
-  const cL = new THREE.Mesh(new THREE.BoxGeometry(T * 1.2, 0.1, T * 1.7), goldMat);
-  cL.position.set(0, DOOR_H / 2 - 0.05, 0);
-  pL.add(cL);
+  // 1. FACHADA FRONTAL
+  // Columna Izquierda
+  const leftColTex = checkTex.clone();
+  leftColTex.repeat.set(1.5, 4);
+  const leftCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({map: leftColTex, roughness: 0.8}));
+  leftCol.position.set(-(DOOR_W / 2 + COL_W / 2), DOOR_H / 2, 0);
+  
+  // Columna Derecha
+  const rightCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({map: leftColTex, roughness: 0.8}));
+  rightCol.position.set((DOOR_W / 2 + COL_W / 2), DOOR_H / 2, 0);
 
-  // Pilar Derecho
-  const pR = pL.clone();
-  pR.position.set(DOOR_W / 2 + T / 2, DOOR_H / 2, 0);
+  // Viga superior (Fachada)
+  const topTex = checkTex.clone();
+  topTex.repeat.set(5, 1);
+  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2, 1.2, 0.2), new THREE.MeshStandardMaterial({map: topTex, roughness: 0.8}));
+  topBeam.position.set(0, DOOR_H + 0.6, 0);
 
-  // Viga superior doble
-  const top1 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + T * 2.5, T, T * 1.5), mat);
-  top1.position.set(0, DOOR_H + T / 2, 0);
+  // 2. VESTÍBULO (Paredes interiores que dan profundidad)
+  const wallTex = checkTex.clone();
+  wallTex.repeat.set(DEPTH, DOOR_H); // Ajustar repetición por tamaño
+  const wallMat = new THREE.MeshStandardMaterial({map: wallTex, roughness: 0.9});
 
-  const top2 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + T * 3.0, 0.08, T * 1.7), goldMat);
-  top2.position.set(0, DOOR_H + T + 0.04, 0);
+  // Pared interior izquierda
+  const innerLeft = new THREE.Mesh(new THREE.PlaneGeometry(DEPTH, DOOR_H), wallMat);
+  innerLeft.rotation.y = Math.PI / 2;
+  innerLeft.position.set(-DOOR_W / 2, DOOR_H / 2, -DEPTH / 2);
 
+  // Pared interior derecha
+  const innerRight = new THREE.Mesh(new THREE.PlaneGeometry(DEPTH, DOOR_H), wallMat);
+  innerRight.rotation.y = -Math.PI / 2;
+  innerRight.position.set(DOOR_W / 2, DOOR_H / 2, -DEPTH / 2);
+
+  // Techo interior
+  const ceilTex = checkTex.clone();
+  ceilTex.repeat.set(DOOR_W, DEPTH);
+  const ceilMat = new THREE.MeshStandardMaterial({map: ceilTex, roughness: 0.9});
+  const innerCeil = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, DEPTH), ceilMat);
+  innerCeil.rotation.x = Math.PI / 2;
+  innerCeil.position.set(0, DOOR_H, -DEPTH / 2);
+  
+  // Piso interior (madera o sombra)
+  const floorMat = new THREE.MeshStandardMaterial({color: 0x3d2b1f, roughness: 1.0});
+  const innerFloor = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, DEPTH), floorMat);
+  innerFloor.rotation.x = -Math.PI / 2;
+  innerFloor.position.set(0, 0, -DEPTH / 2);
+
+  // 3. PUERTAS ABIERTAS (Fijadas al final del vestíbulo)
+  const doorGroupL = new THREE.Group();
+  doorGroupL.position.set(-DOOR_W / 2, 0, -DEPTH);
+  
+  const doorL = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2, DOOR_H, 0.08), doorMat);
+  doorL.position.set(DOOR_W / 4, DOOR_H / 2, 0); // Eje de rotación en el borde
+  doorGroupL.add(doorL);
+  doorGroupL.rotation.y = Math.PI * 0.3; // Abierta hacia afuera (el usuario)
+
+  const doorGroupR = new THREE.Group();
+  doorGroupR.position.set(DOOR_W / 2, 0, -DEPTH);
+  
+  const doorR = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2, DOOR_H, 0.08), doorMat);
+  doorR.position.set(-DOOR_W / 4, DOOR_H / 2, 0);
+  doorGroupR.add(doorR);
+  doorGroupR.rotation.y = -Math.PI * 0.3; // Abierta hacia afuera
+
+  // Molduras doradas en el letrero superior
+  const goldMat = new THREE.MeshStandardMaterial({color: 0xC8A84B, roughness: 0.2, metalness: 0.8});
+  const goldTrimTop = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2 + 0.1, 0.05, 0.25), goldMat);
+  goldTrimTop.position.set(0, DOOR_H + 1.2, 0.05);
+  const goldTrimBot = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2 + 0.1, 0.05, 0.25), goldMat);
+  goldTrimBot.position.set(0, DOOR_H, 0.05);
+
+  // 4. EL MOÑO GIGANTE (Top Izquierda)
+  const bowGroup = createBow();
+  bowGroup.position.set(-(DOOR_W / 2 + COL_W / 2), DOOR_H + 0.6, 0.3);
+  
   // Label "McCORMICK"
   const label = createMcCormickLabel();
 
-  g.add(pL, pR, top1, top2, label);
+  g.add(leftCol, rightCol, topBeam, innerLeft, innerRight, innerCeil, innerFloor, doorGroupL, doorGroupR, goldTrimTop, goldTrimBot, bowGroup, label);
   return g;
+}
+
+function createBow() {
+  const bow = new THREE.Group();
+  const bowMat = new THREE.MeshStandardMaterial({
+    color: 0x3d5c41, // Verde oscuro
+    roughness: 0.6,
+  });
+
+  // Centro del moño
+  const center = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), bowMat);
+  center.scale.z = 0.5;
+  bow.add(center);
+
+  // Lazos del moño usando Torus
+  for (let i = 0; i < 6; i++) {
+    const loop = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.2, 16, 32), bowMat);
+    loop.rotation.z = (Math.PI / 3) * i;
+    loop.rotation.x = Math.PI / 6;
+    loop.position.x = Math.cos((Math.PI / 3) * i) * 0.4;
+    loop.position.y = Math.sin((Math.PI / 3) * i) * 0.4;
+    bow.add(loop);
+  }
+  
+  // Cintas colgando
+  const tailGeo = new THREE.PlaneGeometry(0.4, 2.0);
+  const tail1 = new THREE.Mesh(tailGeo, bowMat);
+  tail1.position.set(-0.3, -1.2, -0.1);
+  tail1.rotation.z = Math.PI / 12;
+  
+  const tail2 = new THREE.Mesh(tailGeo, bowMat);
+  tail2.position.set(0.3, -1.0, -0.2);
+  tail2.rotation.z = -Math.PI / 8;
+  
+  bow.add(tail1, tail2);
+  
+  // Escalar el moño en general
+  bow.scale.set(1.5, 1.5, 1.5);
+  return bow;
 }
 
 function createMcCormickLabel() {
   // Crear textura con canvas
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = 1024;
+  canvas.height = 256;
   const ctx = canvas.getContext('2d');
 
-  // Fondo rojo oscuro con bordes redondeados
-  ctx.fillStyle = '#8B0000';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, 512, 128, 18);
-  ctx.fill();
+  // Fondo transparente
+  ctx.clearRect(0, 0, 1024, 256);
 
-  // Borde dorado
-  ctx.strokeStyle = '#C8A84B';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.roundRect(3, 3, 506, 122, 15);
-  ctx.stroke();
-
-  // Texto principal
+  // Texto principal "McCORMICK" estilo la referencia (Letras blancas gruesas, sombra)
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 62px Georgia, "Times New Roman", serif';
+  ctx.font = '900 120px Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('McCORMICK', 256, 64);
+  
+  // Sombra suave para dar volumen 3D a las letras
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetX = 4;
+  ctx.shadowOffsetY = 4;
+
+  ctx.fillText('McCORMICK', 512, 128);
 
   const tex = new THREE.CanvasTexture(canvas);
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(DOOR_W * 1.05, 0.38),
+    new THREE.PlaneGeometry(DOOR_W + 1.5, 0.8),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
   );
-  // Se subió el letrero para que quede por encima de la doble viga superior (ajustado a la nueva altura)
-  mesh.position.set(0, DOOR_H + 0.6, 0.02);
+  // Posicionado justo en el panel superior
+  mesh.position.set(0, DOOR_H + 0.6, 0.12);
   return mesh;
 }
 
@@ -160,7 +280,9 @@ function createStencilPlane() {
       stencilZPass: THREE.ReplaceStencilOp,
     })
   );
-  mesh.position.set(0, DOOR_H / 2, 0);
+  // IMPORTANTE: El plano del stencil ahora debe estar al FINAL del vestíbulo (-1.5 metros),
+  // para que las paredes del túnel (vestíbulo) sean visibles desde afuera.
+  mesh.position.set(0, DOOR_H / 2, -1.5);
   return mesh;
 }
 
