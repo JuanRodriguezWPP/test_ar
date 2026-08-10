@@ -299,13 +299,29 @@ function buildInterior() {
     (e) => console.warn('Error cargando panorama 360:', e)
   );
 
-  // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.repeat.x = -1;
-  tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color para Three.js moderno
+  tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color
+
+  const geometry = new THREE.SphereGeometry(50, 64, 40);
+  
+  // SOLUCIÓN EXPERTA PARA EL ZOOM (LENTE UV)
+  // En lugar de deformar la geometría de la esfera (que causa que se vea "estirada" y "como una esfera"),
+  // doblamos los píxeles de la imagen suavemente para hacer zoom out al altar.
+  const uvs = geometry.attributes.uv;
+  for (let i = 0; i < uvs.count; i++) {
+    let u = uvs.getX(i);
+    u = 1.0 - u; // Espejo horizontal (para BackSide)
+    
+    // Zoom óptico equilibrado (0.75 en vez de 0.6 para que no se estiren tanto los lados)
+    let cx = u - 0.5;
+    let signCx = Math.sign(cx);
+    let newU = signCx * Math.pow(Math.abs(cx * 2.0), 0.75) * 0.5;
+    newU = newU + 0.5;
+    
+    uvs.setX(i, newU);
+  }
 
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(50, 64, 40),
+    geometry,
     new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
   );
 
@@ -318,18 +334,13 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
-  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
+  // 1. La esfera debe estar centrada en la puerta para no distorsionar la perspectiva
   container.position.z = -2.0;
+  container.position.y = 0.0;
 
-  // Para enfocar exactamente la zona de los tamales, la mesa y la alfombra (la parte de abajo de la imagen),
-  // tenemos que SUBIR la esfera. Al subir la esfera (números positivos), tu cámara queda abajo,
-  // mirando directamente hacia el suelo de la imagen. 
-  container.position.y = 20.0;
-
-  // Escalar la esfera en el eje Z (profundidad) crea un efecto de "túnel" o pasillo largo.
-  // Esto aleja el altar (quita el zoom) pero mantiene el piso conectado a la puerta.
-  container.scale.set(1.2, 1.2, 2.5);
+  // 2. ESCALA 100% PERFECTA: Jamás debemos escalar una esfera 360 en un solo eje,
+  // porque se convierte en un óvalo/túnel y destruye la ilusión de la habitación real.
+  container.scale.set(1.0, 1.0, 1.0);
 
   container.renderOrder = 2;
 
