@@ -12,7 +12,6 @@ const errorMsg = document.getElementById('error-msg');
 const hud = document.getElementById('hud');
 const btnPlace = document.getElementById('btn-place');
 const cameraBg = document.getElementById('camera-bg');
-const productCard = document.getElementById('product-card');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
@@ -165,13 +164,38 @@ function initThree() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Touch: mitad inferior = avanzar, mitad superior = retroceder
+// Touch: mitad inferior = avanzar, mitad superior = retroceder, y click en CTA 3D
 // ═══════════════════════════════════════════════════════════════
 function setupTouch() {
   document.addEventListener('touchstart', e => {
     if (!portalPlaced) return;
     if (e.target.closest('button')) return; // ignorar botones UI
+
+    // ── INTERACCIÓN 3D (Click en CTA) ──
+    if (insidePortal && portalGroup?.userData.getPaprika) {
+      const paprika = portalGroup.userData.getPaprika();
+      if (paprika) {
+        // Actualizar matriz de la escena para asegurar que el Raycaster acierta
+        scene.updateMatrixWorld(true);
+
+        const nx = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+        const ny = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+        
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
+        
+        const intersects = raycaster.intersectObject(paprika, true);
+        const ctaHit = intersects.find(hit => hit.object.name === 'CTA_Plane');
+        
+        if (ctaHit) {
+          showHud('¡Abriendo tienda McCormick!');
+          window.open('https://www.mccormick.com.mx', '_blank');
+          return; // Detener ejecución para no caminar
+        }
+      }
+    }
+
+    // Movimiento (si no tocó el CTA)
     const y = e.touches[0].clientY;
     touchIntent = y > window.innerHeight * 0.5 ? 'fwd' : 'bwd';
     e.preventDefault();
@@ -338,41 +362,7 @@ function renderLoop(ts) {
     checkCrossing();
   }
 
-  // ── Detección visual nativa (Frustum Culling) ──
-  if (insidePortal && portalGroup?.userData.getPaprika) {
-    const paprika = portalGroup.userData.getPaprika();
-    if (paprika) {
-      scene.updateMatrixWorld(true);
-      camera.updateMatrixWorld(true);
-
-      // 1. Crear la caja matemática del campo visual de la pantalla de tu celular
-      const frustum = new THREE.Frustum();
-      const projScreenMatrix = new THREE.Matrix4();
-      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-      projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-      frustum.setFromProjectionMatrix(projScreenMatrix);
-
-      // 2. FORZAR LA APARICIÓN DEL CTA INCONDICIONALMENTE (Prueba de Aislamiento)
-      // Si el CTA aparece ahora, sabemos que el HTML y CSS funcionan perfectamente,
-      // y que el problema radicaba en que el celular nunca reportaba estar "mirando" la páprika.
-      const isLookingAt = true;
-
-      // DIAGNÓSTICO EN PANTALLA
-      showHud(`Prueba Forzada: CTA DEBE ESTAR VISIBLE AHORA`);
-
-      if (isLookingAt) {
-        if (!ctaVisible) {
-          ctaVisible = true;
-          productCard.classList.add('visible');
-        }
-      } else {
-        if (ctaVisible) {
-          ctaVisible = false;
-          productCard.classList.remove('visible');
-        }
-      }
-    }
-  }
+  // La detección del CTA HTML fue removida. Ahora el CTA es un objeto 3D nativo gestionado en portal.js.
 
   renderer.clear(true, true, true);
   renderer.render(scene, camera);
@@ -432,9 +422,6 @@ function onExitPortal() {
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
   showHud('Toca abajo para avanzar al portal');
-  // Ocultar tarjeta de producto
-  productCard.classList.remove('visible');
-  ctaVisible = false; // Resetear estado
 }
 
 // ═══════════════════════════════════════════════════════════════

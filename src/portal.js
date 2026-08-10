@@ -384,7 +384,14 @@ async function loadPaprika(loader) {
     const hitboxMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     const hitbox = new THREE.Mesh(hitboxGeom, hitboxMat);
     hitbox.position.set(0, 0.5, 0); // Centro de masa relativo al wrapper
-    wrapper.add(hitbox);
+    // Añadir el CTA 3D nativo justo a la derecha de la Páprika
+    const cta = create3D_CTA();
+    cta.position.set(1.4, 0.5, 0); // Desplazado a la derecha en el espacio local del wrapper
+    
+    // Girar ligeramente el letrero hacia el usuario
+    cta.rotation.y = -Math.PI / 8;
+    
+    wrapper.add(cta);
 
     return wrapper;
   } catch (e) {
@@ -393,44 +400,57 @@ async function loadPaprika(loader) {
   }
 }
 
-function createProductLabel() {
+function create3D_CTA() {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
+  canvas.width = 600;
+  canvas.height = 300;
   const ctx = canvas.getContext('2d');
 
-  // Fondo cristalino oscuro
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  // Fondo oscuro semitransparente (estilo cristal)
+  ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
   ctx.beginPath();
-  ctx.roundRect(0, 0, 512, 256, 30);
+  ctx.roundRect(0, 0, 600, 300, 30);
   ctx.fill();
 
-  // Borde
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  // Borde sutil
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
   ctx.lineWidth = 4;
   ctx.stroke();
 
-  // Marca
-  ctx.fillStyle = '#C8A84B'; // Dorado
-  ctx.font = 'bold 46px Arial, sans-serif';
+  // Nombre de Empresa
+  ctx.fillStyle = '#C8A84B'; // Dorado McCormick
+  ctx.font = 'bold 36px Arial, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('McCORMICK', 256, 90);
+  ctx.fillText('McCORMICK', 300, 70);
 
   // Producto
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 72px Georgia, serif';
-  ctx.fillText('PÁPRIKA', 256, 170);
+  ctx.font = 'bold 70px Arial, sans-serif';
+  ctx.fillText('Páprika', 300, 155);
 
-  // Subtítulo
-  ctx.fillStyle = '#AAAAAA';
-  ctx.font = '30px Arial, sans-serif';
-  ctx.fillText('Edición Especial 100% Pura', 256, 220);
+  // Botón "CONSEGUIR AHORA"
+  // Dibujar caja del botón
+  ctx.fillStyle = '#C8A84B';
+  ctx.beginPath();
+  ctx.roundRect(100, 200, 400, 70, 15);
+  ctx.fill();
+  
+  // Texto del botón
+  ctx.fillStyle = '#1a1100';
+  ctx.font = 'bold 34px Arial, sans-serif';
+  ctx.fillText('CONSEGUIR AHORA', 300, 248);
 
   const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 16; // Mejorar calidad de texto en 3D
+  
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.6, 0.8),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
   );
+  
+  // Taggear la malla para detectarla en el click
+  mesh.name = 'CTA_Plane';
+  
   return mesh;
 }
 

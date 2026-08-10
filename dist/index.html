@@ -197,30 +197,7 @@
     }
 
     /* ── Tarjeta de producto (aparece al entrar al portal) ── */
-    #product-card {
-      position: fixed;
-      left: 20px;
-      top: 50%;
-      transform: translateY(-50%);
-      z-index: 30;
-      width: 170px;
-      background: rgba(10, 10, 10, 0.72);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 20px;
-      padding: 18px 14px 16px;
-      display: none; /* Oculto por defecto para evitar fallos de transform en iOS */
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      pointer-events: none;
-    }
 
-    #product-card.visible {
-      display: flex; /* Aparece instantáneamente de forma ultra-segura */
-      pointer-events: auto;
-    }
 
     #product-card .company-name {
       font-size: 0.8rem;
@@ -260,7 +237,7 @@
       box-shadow: 0 2px 8px rgba(200,168,75,0.2);
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-AP3X3fji.js"></script>
+  <script type="module" crossorigin src="/assets/index-BZlsUehC.js"></script>
 </head>
 
 <body>
@@ -292,12 +269,7 @@
   <!-- Botón flotante para colocar portal -->
   <button id="btn-place">📍 Colocar portal aquí</button>
 
-  <!-- Tarjeta de producto (aparece al entrar al portal) -->
-  <div id="product-card">
-    <p class="company-name">McCORMICK</p>
-    <p class="product-title">Páprika</p>
-    <button class="cta-btn" onclick="window.open('https://www.mccormick.com.mx','_blank')">Conseguir Ahora</button>
-  </div>
+  <!-- El CTA ya no está en HTML, es un objeto 3D -->
 
 </body>
 
