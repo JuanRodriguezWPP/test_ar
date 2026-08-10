@@ -32,7 +32,7 @@ export async function buildPortalGroup(loader) {
   // 4. Páprika dentro del portal (a la izquierda)
   paprikaMesh = await loadPaprika(loader);
   if (paprikaMesh) {
-    paprikaMesh.position.set(-1.5, paprikaBaseY, -3.0); // A la izquierda, dentro del portal
+    paprikaMesh.position.set(-0.5, paprikaBaseY, -3.0); // Más al centro, no tan a la izquierda
     paprikaMesh.visible = false;
     group.add(paprikaMesh);
   }
@@ -56,9 +56,9 @@ export async function buildPortalGroup(loader) {
     
     // 2. Parallax Dinámico (Magia de Lejanía sin saltos)
     // Cuando offset es 0 (estás lejos de la puerta), la esfera está a -15m (mucha profundidad).
-    // Cuando llegas a la puerta (offset ≈ 1.8), la esfera se acerca suavemente a -2m 
+    // Cuando llegas a la puerta (offset ≈ 2.0), la esfera se acerca suavemente a -2m 
     // para que estés exactamente en el centro y no haya deformación de ojo de pez.
-    const progress = Math.min(Math.max(offset / 1.8, 0.0), 1.0);
+    const progress = Math.min(Math.max(offset / 2.0, 0.0), 1.0);
     interior.position.z = -15.0 + (13.0 * progress);
   };
 

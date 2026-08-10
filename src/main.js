@@ -277,8 +277,8 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Colocar a 1.8m enfrente de la mirada actual y bajarlo 1.3m para centrarlo verticalmente
-  portalOrigin.set(fwd.x * 1.8, -1.3, fwd.z * 1.8);
+  // Colocar a 2.0m enfrente de la mirada actual y bajarlo 1.3m para centrarlo verticalmente
+  portalOrigin.set(fwd.x * 2.0, -1.3, fwd.z * 2.0);
   portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
@@ -338,24 +338,29 @@ function renderLoop(ts) {
     checkCrossing();
   }
 
-  // ── Raycast para mostrar/ocultar CTA de Páprika ─────────────
+  // ── Detección de vista hacia la Páprika (Método Matemático Infalible) ──
   if (insidePortal && portalGroup?.userData.getPaprika) {
     const paprika = portalGroup.userData.getPaprika();
     if (paprika) {
-      // 1. FORZAR actualización de la matriz de la cámara para que el Raycaster sea exacto al milímetro
-      camera.updateMatrixWorld();
+      // 1. Obtener dirección hacia donde apunta la cámara
+      const camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+      
+      // 2. Obtener dirección desde la cámara hacia la Páprika en el mundo real
+      const papPos = new THREE.Vector3();
+      paprika.getWorldPosition(papPos);
+      const dirToPap = papPos.sub(camera.position).normalize();
 
-      raycaster.setFromCamera(screenCenter, camera);
-      const intersects = raycaster.intersectObject(paprika, true);
+      // 3. Producto punto (Dot Product) para saber si están alineados
+      // 1.0 = mirando exactamente al centro, 0.0 = mirando a 90 grados
+      // 0.90 es un margen muy generoso (aprox 25 grados de visión a cada lado)
+      const isLookingAt = camDir.dot(dirToPap) > 0.85;
 
-      if (intersects.length > 0) {
-        showHud('¡Estás viendo la Páprika!');
+      if (isLookingAt) {
         if (!ctaVisible) {
           ctaVisible = true;
           productCard.classList.add('visible');
         }
       } else {
-        showHud('Busca la Páprika a tu alrededor...');
         if (ctaVisible) {
           ctaVisible = false;
           productCard.classList.remove('visible');
@@ -383,8 +388,8 @@ function applyPortalOffset() {
 // Detección de cruce
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // Cuando portalOffset ≥ distancia inicial (1.8m), el portal cruzó la cámara
-  const threshold = 1.9;
+  // Cuando portalOffset ≥ distancia inicial (2.0m), el portal cruzó la cámara
+  const threshold = 2.1;
 
   const nowInside = portalOffset >= threshold;
 
