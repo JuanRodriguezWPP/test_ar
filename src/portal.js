@@ -44,18 +44,6 @@ export async function buildPortalGroup(loader) {
     frame.visible = enabled; // Ocultar la puerta cuando estás adentro
     // La Páprika aparece SOLO cuando se entra al portal
     if (paprikaMesh) paprikaMesh.visible = !enabled;
-
-    // MAGIA: Cambiar el "zoom" dependiendo de si estamos adentro o afuera
-    if (interior.userData.tex) {
-      if (enabled) {
-        // Afuera (modo ventana): Restaurar el zoom out (-2.5, 2.5)
-        interior.userData.tex.repeat.set(-2.5, 2.5);
-      } else {
-        // Adentro (modo inmersivo): Quitar el zoom para que sea un verdadero 360 (1:1)
-        // Usamos -1 en X por el efecto espejo (BackSide)
-        interior.userData.tex.repeat.set(-1.0, 1.0);
-      }
-    }
   };
 
   // Animación de flotación de la Páprika (llamar desde renderLoop)
@@ -314,7 +302,7 @@ function buildInterior() {
   // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping; // Evita que se repita el techo en el piso
-  
+
   // ESCALAR LA TEXTURA (LA SOLUCIÓN REAL)
   // Como la puerta es angosta y estamos a 3m de distancia, geométricamente solo vemos un ángulo pequeño de la esfera.
   // Para ver "más" de la imagen, hacemos la imagen más pequeña en la esfera.
@@ -338,22 +326,18 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
-  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
-  container.position.z = -2.0;
+  // Tienes razón, ponerlo en el extremo (-50) genera un efecto "ojo de pez" o de globo muy fuerte.
+  // Vamos a buscar el punto intermedio perfecto: suficiente distancia para ver el altar completo, 
+  // pero sin que se deformen las orillas.
+  container.position.z = -15.0;
 
-  // Como la nueva imagen (360img2.png) tiene el altar más arriba del centro, 
-  // tenemos que BAJAR la esfera (valores negativos) para que la cámara quede más arriba, 
-  // alineada con el horizonte de la foto. Esto quita el efecto de "dimensión" estirada del piso.
-  container.position.y = -15.0;
+  // Como la esfera ya no está tan lejos, ajustamos un poco menos la altura para centrar el horizonte.
+  container.position.y = -5.0;
 
-  // Usamos una escala uniforme para que la imagen se vea natural y sin estiramientos.
-  container.scale.set(1.5, 1.5, 1.5);
+  // Escala 100% natural, sin túneles
+  container.scale.set(1.0, 1.0, 1.0);
 
   container.renderOrder = 2;
-
-  // Guardar la textura en userData para poder modificar su escala al entrar/salir del portal
-  container.userData.tex = tex;
 
   return container;
 }
