@@ -44,6 +44,18 @@ export async function buildPortalGroup(loader) {
     frame.visible = enabled; // Ocultar la puerta cuando estás adentro
     // La Páprika aparece SOLO cuando se entra al portal
     if (paprikaMesh) paprikaMesh.visible = !enabled;
+
+    // MAGIA: Cambiar el "zoom" dependiendo de si estamos adentro o afuera
+    if (interior.userData.tex) {
+      if (enabled) {
+        // Afuera (modo ventana): Restaurar el zoom out (-2.5, 2.5)
+        interior.userData.tex.repeat.set(-2.5, 2.5);
+      } else {
+        // Adentro (modo inmersivo): Quitar el zoom para que sea un verdadero 360 (1:1)
+        // Usamos -1 en X por el efecto espejo (BackSide)
+        interior.userData.tex.repeat.set(-1.0, 1.0);
+      }
+    }
   };
 
   // Animación de flotación de la Páprika (llamar desde renderLoop)
@@ -339,6 +351,9 @@ function buildInterior() {
   container.scale.set(1.5, 1.5, 1.5);
 
   container.renderOrder = 2;
+
+  // Guardar la textura en userData para poder modificar su escala al entrar/salir del portal
+  container.userData.tex = tex;
 
   return container;
 }
