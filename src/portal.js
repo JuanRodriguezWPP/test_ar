@@ -308,7 +308,7 @@ function buildInterior() {
 
   // Cargar imagen panorámica equirectangular
   const tex = new THREE.TextureLoader().load(
-    '/models/360img2.png',
+    '/models/04316f8b-befd-4514-838e-47017f48e32a.jpeg',
     () => { /* cargada OK */ },
     undefined,
     (e) => console.warn('Error cargando panorama 360:', e)
