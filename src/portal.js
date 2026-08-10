@@ -48,10 +48,13 @@ export async function buildPortalGroup(loader) {
 
   // Animación dinámica basada en los pasos del usuario
   group.userData.tick = (ts, offset = 0) => {
-    // 1. Animación de la Páprika
-    if (paprikaMesh) {
-      paprikaMesh.position.y = paprikaBaseY + Math.sin(ts * 0.0015) * 0.18;
-      paprikaMesh.rotation.y += 0.006;
+    // 1. Animación de la Páprika (solo el modelo 3D, no el CTA ni el hitbox)
+    if (paprikaMesh && paprikaMesh.children[0]) {
+      const model = paprikaMesh.children[0];
+      if (model.userData.baseY !== undefined) {
+        model.position.y = model.userData.baseY + Math.sin(ts * 0.0015) * 0.15;
+      }
+      model.rotation.y += 0.006;
     }
     
     // 2. Parallax Dinámico (Magia de Lejanía sin saltos)
@@ -370,10 +373,12 @@ async function loadPaprika(loader) {
     const s = targetH / maxDim;
     model.scale.set(s, s, s);
 
-    // Centrar modelo localmente
+    // Centrar modelo localmente y guardar su Y base para la animación
     const center = new THREE.Vector3();
     bbox.getCenter(center);
-    model.position.set(-center.x * s, -bbox.min.y * s, -center.z * s);
+    const baseY = -bbox.min.y * s;
+    model.position.set(-center.x * s, baseY, -center.z * s);
+    model.userData.baseY = baseY;
 
     // Envolver en un grupo para que la rotación sea pura
     const wrapper = new THREE.Group();
@@ -384,12 +389,12 @@ async function loadPaprika(loader) {
     const hitboxMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     const hitbox = new THREE.Mesh(hitboxGeom, hitboxMat);
     hitbox.position.set(0, 0.5, 0); // Centro de masa relativo al wrapper
-    // Añadir el CTA 3D nativo justo a la derecha de la Páprika
+    // Añadir el CTA 3D nativo justo a la derecha y ligeramente arriba de la Páprika
     const cta = create3D_CTA();
-    cta.position.set(1.4, 0.5, 0); // Desplazado a la derecha en el espacio local del wrapper
+    cta.position.set(1.6, 0.8, 0); // Desplazado a la derecha en el espacio local del wrapper
     
-    // Girar ligeramente el letrero hacia el usuario
-    cta.rotation.y = -Math.PI / 8;
+    // Girar ligeramente el letrero hacia el usuario para que sea muy legible
+    cta.rotation.y = -Math.PI / 10;
     
     wrapper.add(cta);
 
