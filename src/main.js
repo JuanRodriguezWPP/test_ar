@@ -54,9 +54,9 @@ let touchIntent = null; // 'fwd' | 'bwd' | null
 // ── Detección profesional de pasos (algoritmo pico-valle) ────
 // La magnitud del acelerómetro oscila entre ~7 y ~13 m/s² al caminar.
 // Un paso = subida por encima de STEP_HIGH + bajada por debajo de STEP_LOW.
-const STEP_HIGH = 10.8; // umbral alto (pico del paso)
-const STEP_LOW = 9.0;  // umbral bajo  (valle del paso)
-const STEP_GAP_MS = 220;  // mínimo ms entre pasos (~4 pasos/s máx)
+const STEP_HIGH = 12.5; // Aumentado (antes 10.8) para que rotar el celular no dispare pasos falsos
+const STEP_LOW = 8.5;  // Umbral bajo  (valle del paso)
+const STEP_GAP_MS = 250;  // mínimo ms entre pasos
 let smoothMag = 9.81; // magnitud suavizada
 let peakSeen = false; // ¿detectamos ya el pico?
 let lastStepMs = 0;    // timestamp del último paso
@@ -338,32 +338,39 @@ function renderLoop(ts) {
     checkCrossing();
   }
 
-  // ── Detección de vista hacia la Páprika (Método Matemático Infalible) ──
+  // ── Detección de vista hacia la Páprika (Nueva Lógica Matemática Absoluta) ──
   if (insidePortal && portalGroup?.userData.getPaprika) {
     const paprika = portalGroup.userData.getPaprika();
     if (paprika) {
-      // 1. Obtener dirección hacia donde apunta la cámara
+      // 1. FORZAR que el motor 3D calcule las posiciones reales exactas en este frame
+      scene.updateMatrixWorld(true);
+
+      // 2. Hacia dónde apunta tu celular exactamente
       const camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
       
-      // 2. Obtener dirección desde la cámara hacia la Páprika en el mundo real
+      // 3. En qué punto del universo está la páprika
       const papPos = new THREE.Vector3();
       paprika.getWorldPosition(papPos);
+      
+      // 4. Vector desde tu celular hacia la páprika
       const dirToPap = papPos.sub(camera.position).normalize();
 
-      // 3. Producto punto (Dot Product) para saber si están alineados
-      // 1.0 = mirando exactamente al centro, 0.0 = mirando a 90 grados
-      // 0.90 es un margen muy generoso (aprox 25 grados de visión a cada lado)
-      const isLookingAt = camDir.dot(dirToPap) > 0.85;
+      // 5. Ángulo de visión (Dot product: 1.0 es el centro exacto)
+      // 0.88 da un cono de visión perfecto para detectar si la miras
+      const isLookingAt = camDir.dot(dirToPap) > 0.88;
 
       if (isLookingAt) {
         if (!ctaVisible) {
           ctaVisible = true;
-          productCard.classList.add('visible');
+          productCard.style.display = 'flex';
+          // Pequeño delay para que el navegador procese el display:flex antes de la transición CSS
+          setTimeout(() => productCard.classList.add('visible'), 10);
         }
       } else {
         if (ctaVisible) {
           ctaVisible = false;
           productCard.classList.remove('visible');
+          setTimeout(() => { if(!ctaVisible) productCard.style.display = 'none'; }, 500); // Ocultar del DOM tras animación
         }
       }
     }

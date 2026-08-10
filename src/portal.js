@@ -32,7 +32,7 @@ export async function buildPortalGroup(loader) {
   // 4. Páprika dentro del portal (a la izquierda)
   paprikaMesh = await loadPaprika(loader);
   if (paprikaMesh) {
-    paprikaMesh.position.set(-0.5, paprikaBaseY, -3.0); // Más al centro, no tan a la izquierda
+    paprikaMesh.position.set(-1.2, paprikaBaseY, -3.0); // A la izquierda como pidió el usuario
     paprikaMesh.visible = false;
     group.add(paprikaMesh);
   }
