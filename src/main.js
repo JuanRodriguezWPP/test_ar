@@ -342,7 +342,7 @@ function renderLoop(ts) {
     if (paprika) {
       raycaster.setFromCamera(screenCenter, camera);
       const intersects = raycaster.intersectObject(paprika, true);
-      
+
       if (intersects.length > 0) {
         if (!ctaVisible) {
           ctaVisible = true;
