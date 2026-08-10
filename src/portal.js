@@ -318,12 +318,9 @@ function buildInterior() {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping; // Evita que se repita el techo en el piso
 
-  // ESCALAR LA TEXTURA (LA SOLUCIÓN REAL)
-  // Como la puerta es angosta y estamos a 3m de distancia, geométricamente solo vemos un ángulo pequeño de la esfera.
-  // Para ver "más" de la imagen, hacemos la imagen más pequeña en la esfera.
   tex.center.set(0.5, 0.5);
-  // Aumentamos de 1.5 a 2.5 para alejar la imagen muchísimo más (hace la imagen casi un tercio de su tamaño original).
-  tex.repeat.set(-2.5, 2.5);
+  // Escala 1:1 perfecta para que NUNCA se duplique la imagen
+  tex.repeat.set(-1, 1);
 
   tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color para Three.js moderno
 
