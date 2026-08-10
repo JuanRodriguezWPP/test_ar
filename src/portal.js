@@ -312,20 +312,21 @@ function buildInterior() {
   const geometry = new THREE.SphereGeometry(50, 64, 40);
 
   // SOLUCIÓN EXPERTA PARA EL ZOOM (LENTE UV)
-  // En lugar de deformar la geometría de la esfera (que causa que se vea "estirada" y "como una esfera"),
-  // doblamos los píxeles de la imagen suavemente para hacer zoom out al altar.
   const uvs = geometry.attributes.uv;
   for (let i = 0; i < uvs.count; i++) {
     let u = uvs.getX(i);
+    let v = uvs.getY(i);
     u = 1.0 - u; // Espejo horizontal (para BackSide)
 
-    // Zoom óptico equilibrado (0.75 en vez de 0.6 para que no se estiren tanto los lados)
+    // Zoom horizontal (0.70 para alejar un poco más a lo ancho)
     let cx = u - 0.5;
-    let signCx = Math.sign(cx);
-    let newU = signCx * Math.pow(Math.abs(cx * 2.0), 0.75) * 0.5;
-    newU = newU + 0.5;
-
+    let newU = Math.sign(cx) * Math.pow(Math.abs(cx * 2.0), 0.70) * 0.5 + 0.5;
     uvs.setX(i, newU);
+
+    // Zoom vertical (0.80 para alejar a lo alto y que se vea la cabeza de la Virgen)
+    let cv = v - 0.5;
+    let newV = Math.sign(cv) * Math.pow(Math.abs(cv * 2.0), 0.80) * 0.5 + 0.5;
+    uvs.setY(i, newV);
   }
 
   const sphere = new THREE.Mesh(
@@ -378,11 +379,11 @@ async function loadPaprika(loader) {
     const wrapper = new THREE.Group();
     wrapper.add(model);
 
-    // Hitbox invisible para el Raycaster (hace que sea mucho más fácil "mirar" la páprika)
-    const hitboxGeom = new THREE.SphereGeometry(0.8, 16, 16);
+    // Hitbox gigantesca y centrada para garantizar detección al primer vistazo
+    const hitboxGeom = new THREE.SphereGeometry(1.2, 16, 16);
     const hitboxMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     const hitbox = new THREE.Mesh(hitboxGeom, hitboxMat);
-    hitbox.position.set(-center.x * s, (-bbox.min.y * s) + (targetH / 2), -center.z * s);
+    hitbox.position.set(0, 0.5, 0); // Centro de masa relativo al wrapper
     wrapper.add(hitbox);
 
     return wrapper;

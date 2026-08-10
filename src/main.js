@@ -342,15 +342,20 @@ function renderLoop(ts) {
   if (insidePortal && portalGroup?.userData.getPaprika) {
     const paprika = portalGroup.userData.getPaprika();
     if (paprika) {
+      // 1. FORZAR actualización de la matriz de la cámara para que el Raycaster sea exacto al milímetro
+      camera.updateMatrixWorld();
+
       raycaster.setFromCamera(screenCenter, camera);
       const intersects = raycaster.intersectObject(paprika, true);
 
       if (intersects.length > 0) {
+        showHud('¡Estás viendo la Páprika!');
         if (!ctaVisible) {
           ctaVisible = true;
           productCard.classList.add('visible');
         }
       } else {
+        showHud('Busca la Páprika a tu alrededor...');
         if (ctaVisible) {
           ctaVisible = false;
           productCard.classList.remove('visible');
