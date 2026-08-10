@@ -46,12 +46,20 @@ export async function buildPortalGroup(loader) {
     if (paprikaMesh) paprikaMesh.visible = !enabled;
   };
 
-  // Animación de flotación de la Páprika (llamar desde renderLoop)
-  group.userData.tick = (ts) => {
+  // Animación dinámica basada en los pasos del usuario
+  group.userData.tick = (ts, offset = 0) => {
+    // 1. Animación de la Páprika
     if (paprikaMesh) {
       paprikaMesh.position.y = paprikaBaseY + Math.sin(ts * 0.0015) * 0.18;
       paprikaMesh.rotation.y += 0.006;
     }
+    
+    // 2. Parallax Dinámico (Magia de Lejanía sin saltos)
+    // Cuando offset es 0 (estás lejos de la puerta), la esfera está a -15m (mucha profundidad).
+    // Cuando llegas a la puerta (offset ≈ 3.0), la esfera se acerca suavemente a -2m 
+    // para que estés exactamente en el centro y no haya deformación de ojo de pez.
+    const progress = Math.min(Math.max(offset / 3.0, 0.0), 1.0);
+    interior.position.z = -15.0 + (13.0 * progress);
   };
 
   return group;
@@ -302,7 +310,7 @@ function buildInterior() {
   tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color
 
   const geometry = new THREE.SphereGeometry(50, 64, 40);
-  
+
   // SOLUCIÓN EXPERTA PARA EL ZOOM (LENTE UV)
   // En lugar de deformar la geometría de la esfera (que causa que se vea "estirada" y "como una esfera"),
   // doblamos los píxeles de la imagen suavemente para hacer zoom out al altar.
@@ -310,13 +318,13 @@ function buildInterior() {
   for (let i = 0; i < uvs.count; i++) {
     let u = uvs.getX(i);
     u = 1.0 - u; // Espejo horizontal (para BackSide)
-    
+
     // Zoom óptico equilibrado (0.75 en vez de 0.6 para que no se estiren tanto los lados)
     let cx = u - 0.5;
     let signCx = Math.sign(cx);
     let newU = signCx * Math.pow(Math.abs(cx * 2.0), 0.75) * 0.5;
     newU = newU + 0.5;
-    
+
     uvs.setX(i, newU);
   }
 
@@ -334,8 +342,7 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // 1. La esfera debe estar centrada en la puerta para no distorsionar la perspectiva
-  container.position.z = -2.0;
+  // La posición Z ahora es controlada dinámicamente por la función tick()
   container.position.y = 0.0;
 
   // 2. ESCALA 100% PERFECTA: Jamás debemos escalar una esfera 360 en un solo eje,

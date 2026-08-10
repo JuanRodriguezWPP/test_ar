@@ -307,8 +307,8 @@ function renderLoop(ts) {
     camera.rotation.set(0, 0, 0);
   }
 
-  // ── Animación de la Páprika (flotación + rotación) ──────────
-  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts);
+  // ── Animación de la Páprika y la profundidad de la esfera ──────────
+  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset);
 
   // ── Movimiento con toque y suavizado de pasos ────
   if (portalPlaced) {
