@@ -293,7 +293,7 @@ function buildInterior() {
 
   // Cargar imagen panorámica equirectangular
   const tex = new THREE.TextureLoader().load(
-    '/models/360img.png',
+    '/models/360img2.png',
     () => { /* cargada OK */ },
     undefined,
     (e) => console.warn('Error cargando panorama 360:', e)
@@ -301,7 +301,15 @@ function buildInterior() {
 
   // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
   tex.wrapS = THREE.RepeatWrapping;
-  tex.repeat.x = -1;
+  tex.wrapT = THREE.ClampToEdgeWrapping; // Evita que se repita el techo en el piso
+  
+  // ESCALAR LA TEXTURA (LA SOLUCIÓN REAL)
+  // Como la puerta es angosta y estamos a 3m de distancia, geométricamente solo vemos un ángulo pequeño de la esfera.
+  // Para ver "más" de la imagen, hacemos la imagen más pequeña en la esfera.
+  tex.center.set(0.5, 0.5);
+  // Aumentamos de 1.5 a 2.5 para alejar la imagen muchísimo más (hace la imagen casi un tercio de su tamaño original).
+  tex.repeat.set(-2.5, 2.5);
+
   tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color para Three.js moderno
 
   const sphere = new THREE.Mesh(
@@ -310,7 +318,7 @@ function buildInterior() {
   );
 
   // Rotar la esfera para enfocar el altar (giramos 180° respecto al intento anterior)
-  sphere.rotation.y = (Math.PI / 2) - 0.05;
+  sphere.rotation.y = Math.PI / 2;
 
   sphere.renderOrder = 2;
   container.add(sphere);
@@ -318,17 +326,17 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Alejamos el centro de la esfera un poco de la puerta
-  container.position.z = -5.0;
+  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
+  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
+  container.position.z = -2.0;
 
-  // Mantenemos la posición Y en 0 (o cerca de 0) para que la cámara no mire hacia el piso,
-  // sino directamente al centro del altar.
-  container.position.y = 0.0;
+  // Como la nueva imagen (360img2.png) tiene el altar más arriba del centro, 
+  // tenemos que BAJAR la esfera (valores negativos) para que la cámara quede más arriba, 
+  // alineada con el horizonte de la foto. Esto quita el efecto de "dimensión" estirada del piso.
+  container.position.y = -15.0;
 
-  // Para darle más "ancho" y que no se vea tan apretada o jaloneada hacia atrás,
-  // aumentamos la escala en el eje X (horizontal) a 1.8. 
-  // Mantenemos Z en 4.0 para la profundidad (el "zoom out").
-  container.scale.set(1.8, 1.0, 4.0);
+  // Usamos una escala uniforme para que la imagen se vea natural y sin estiramientos.
+  container.scale.set(1.5, 1.5, 1.5);
 
   container.renderOrder = 2;
 
