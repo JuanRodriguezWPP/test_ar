@@ -223,12 +223,21 @@
       pointer-events: auto;
     }
 
+    #product-card .company-name {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #C8A84B;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: -4px;
+    }
+
     #product-card .product-title {
-      font-size: 1.1rem;
-      font-weight: 800;
+      font-size: 1.25rem;
+      font-weight: 900;
       text-align: center;
       color: #fff;
-      line-height: 1.25;
+      line-height: 1.1;
     }
 
     #product-card .cta-btn {
@@ -285,8 +294,9 @@
 
   <!-- Tarjeta de producto (aparece al entrar al portal) -->
   <div id="product-card">
-    <p class="product-title">Páprika<br>McCORMICK</p>
-    <button class="cta-btn" onclick="window.open('https://www.mccormick.com.mx','_blank')">Adquiere Ahora</button>
+    <p class="company-name">McCORMICK</p>
+    <p class="product-title">Páprika</p>
+    <button class="cta-btn" onclick="window.open('https://www.mccormick.com.mx','_blank')">Conseguir Ahora</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

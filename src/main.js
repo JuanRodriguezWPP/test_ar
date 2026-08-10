@@ -338,37 +338,37 @@ function renderLoop(ts) {
     checkCrossing();
   }
 
-  // ── Detección de vista hacia la Páprika (Nueva Lógica Matemática Absoluta) ──
+  // ── Detección visual nativa (Frustum Culling) ──
   if (insidePortal && portalGroup?.userData.getPaprika) {
     const paprika = portalGroup.userData.getPaprika();
     if (paprika) {
       scene.updateMatrixWorld(true);
 
-      // Obtener dirección real de la cámara
-      const camDir = new THREE.Vector3();
-      camera.getWorldDirection(camDir);
-      
-      // Obtener posición real de la Páprika
-      const papPos = new THREE.Vector3();
-      paprika.getWorldPosition(papPos);
-      
-      const dirToPap = papPos.sub(camera.position).normalize();
-      const dot = camDir.dot(dirToPap);
+      // 1. Crear la caja matemática del campo visual de la pantalla de tu celular
+      const frustum = new THREE.Frustum();
+      const projScreenMatrix = new THREE.Matrix4();
+      projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(projScreenMatrix);
 
-      // 0.70 = cono enorme de ~45 grados (muy fácil de detectar)
-      const isLookingAt = dot > 0.70;
+      // 2. Verificar si la Páprika (o cualquiera de sus mallas) "toca" tu pantalla
+      let isLookingAt = false;
+      paprika.traverse((child) => {
+        if (child.isMesh && child.geometry) {
+          if (frustum.intersectsObject(child)) {
+            isLookingAt = true;
+          }
+        }
+      });
 
       if (isLookingAt) {
         if (!ctaVisible) {
           ctaVisible = true;
           productCard.classList.add('visible');
-          showHud('¡Páprika localizada!'); // Feedback visual para el usuario
         }
       } else {
         if (ctaVisible) {
           ctaVisible = false;
           productCard.classList.remove('visible');
-          showHud('¡Bienvenido al mundo McCORMICK! · Toca arriba para salir');
         }
       }
     }
