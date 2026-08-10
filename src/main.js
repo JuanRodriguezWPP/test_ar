@@ -343,10 +343,12 @@ function renderLoop(ts) {
     const paprika = portalGroup.userData.getPaprika();
     if (paprika) {
       scene.updateMatrixWorld(true);
+      camera.updateMatrixWorld(true);
 
       // 1. Crear la caja matemática del campo visual de la pantalla de tu celular
       const frustum = new THREE.Frustum();
       const projScreenMatrix = new THREE.Matrix4();
+      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
       projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(projScreenMatrix);
 
@@ -359,6 +361,9 @@ function renderLoop(ts) {
           }
         }
       });
+
+      // DIAGNÓSTICO EN PANTALLA: Si esto dice SÍ y no ves el CTA, es el CSS. Si dice NO, es el Frustum.
+      showHud(`¿Viendo la Páprika?: ${isLookingAt ? 'SÍ (CTA DEBERÍA APARECER)' : 'NO'}`);
 
       if (isLookingAt) {
         if (!ctaVisible) {
