@@ -277,14 +277,14 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Colocar a 3m enfrente de la mirada actual
-  portalOrigin.set(fwd.x * 3.0, -1.0, fwd.z * 3.0);
+  // Colocar a 2.1m enfrente de la mirada actual y bajarlo 1.2m para centrarlo verticalmente
+  portalOrigin.set(fwd.x * 2.1, -1.2, fwd.z * 2.1);
   portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
 
-  // El portal siempre mira hacia la cámara (origen)
-  portalGroup.lookAt(0, -1.0, 0);
+  // El portal siempre mira hacia la cámara, nivelado
+  portalGroup.lookAt(0, -1.2, 0);
 
   scene.add(portalGroup);
   portalPlaced = true;
@@ -376,8 +376,8 @@ function applyPortalOffset() {
 // Detección de cruce
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // Cuando portalOffset ≥ distancia inicial (3m), el portal cruzó la cámara
-  const threshold = 3.1;
+  // Cuando portalOffset ≥ distancia inicial (2.1m), el portal cruzó la cámara
+  const threshold = 2.2;
 
   const nowInside = portalOffset >= threshold;
 
