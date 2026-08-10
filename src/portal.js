@@ -314,30 +314,23 @@ function buildInterior() {
     (e) => console.warn('Error cargando panorama 360:', e)
   );
 
-  tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color
+  // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping; // Evita que se repita el techo en el piso
 
-  const geometry = new THREE.SphereGeometry(50, 64, 40);
-  
-  // MODIFICAMOS LAS COORDENADAS UV DIRECTAMENTE EN LA GEOMETRÍA
-  // Esto es 100% seguro, no usa shaders, y logra el mismo efecto de "Lente Óptico".
-  const uvs = geometry.attributes.uv;
-  for (let i = 0; i < uvs.count; i++) {
-    let u = uvs.getX(i);
-    
-    // 1. Invertir horizontalmente para el efecto espejo del BackSide
-    u = 1.0 - u;
-    
-    // 2. Aplicar el zoom out matemático (Seno) al centro del altar
-    let cx = u - 0.5;
-    let newU = cx + 0.15 * Math.sin(cx * Math.PI * 2.0);
-    newU = newU + 0.5;
-    
-    uvs.setX(i, newU);
-  }
+  // ESCALAR LA TEXTURA (LA SOLUCIÓN REAL)
+  // Como la puerta es angosta y estamos a 3m de distancia, geométricamente solo vemos un ángulo pequeño de la esfera.
+  // Para ver "más" de la imagen, hacemos la imagen más pequeña en la esfera.
+  tex.center.set(0.5, 0.5);
+  // Aumentamos de 1.5 a 2.5 para alejar la imagen muchísimo más (hace la imagen casi un tercio de su tamaño original).
+  tex.repeat.set(-2.5, 2.5);
 
-  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
-  
-  const sphere = new THREE.Mesh(geometry, mat);
+  tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color para Three.js moderno
+
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(50, 64, 40),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
+  );
 
   // Rotar la esfera para enfocar el altar (giramos 180° respecto al intento anterior)
   sphere.rotation.y = Math.PI / 2;
