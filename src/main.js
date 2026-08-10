@@ -4,43 +4,43 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ═══════════════════════════════════════════════════════════════
 // UI refs
 // ═══════════════════════════════════════════════════════════════
-const splash        = document.getElementById('splash');
+const splash = document.getElementById('splash');
 const splashLoading = document.getElementById('splash-loading');
-const statusEl      = document.getElementById('status-text');
-const btnOpen       = document.getElementById('btn-open');
-const errorMsg      = document.getElementById('error-msg');
-const hud           = document.getElementById('hud');
-const btnPlace      = document.getElementById('btn-place');
-const cameraBg      = document.getElementById('camera-bg');
-const productCard   = document.getElementById('product-card');
+const statusEl = document.getElementById('status-text');
+const btnOpen = document.getElementById('btn-open');
+const errorMsg = document.getElementById('error-msg');
+const hud = document.getElementById('hud');
+const btnPlace = document.getElementById('btn-place');
+const cameraBg = document.getElementById('camera-bg');
+const productCard = document.getElementById('product-card');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
 // ═══════════════════════════════════════════════════════════════
 let renderer, scene, camera;
-let portalGroup  = null;
+let portalGroup = null;
 let portalPlaced = false;
 let insidePortal = false;
-let lastTs       = 0;
+let lastTs = 0;
 
 // ── Giroscopio (solo rotación de cámara) ─────────────────────
 const deviceQuat = new THREE.Quaternion();
-const _euler     = new THREE.Euler();
-const _corrQ     = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-const _screenQ   = new THREE.Quaternion();
-const _zAxis     = new THREE.Vector3(0, 0, 1);
-let gyroReady    = false;
+const _euler = new THREE.Euler();
+const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const _screenQ = new THREE.Quaternion();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+let gyroReady = false;
 
 // ── Movimiento ────────────────────────────────────────────────
 // La CÁMARA está FIJA en el origen. El PORTAL se acerca o aleja.
 // portalOffset > 0  →  portal se acerca (usuario avanza)
 // portalOffset < 0  →  portal se aleja  (usuario retrocede)
 let portalOffset = 0;   // metros acumulados desde la posición inicial
-let moveVel      = 0;   // velocidad actual m/s (para el toque)
+let moveVel = 0;   // velocidad actual m/s (para el toque)
 
-const TOUCH_SPEED  = 1.2;  // m/s con toque
-const MAX_DIST     = 8.0;  // metros máx que puede alejarse el portal
-const STEP_MOVE    = 1.5;  // metros que avanza el portal por cada paso detectado
+const TOUCH_SPEED = 1.2;  // m/s con toque
+const MAX_DIST = 8.0;  // metros máx que puede alejarse el portal
+const STEP_MOVE = 1.5;  // metros que avanza el portal por cada paso detectado
 
 // Touch
 let touchIntent = null; // 'fwd' | 'bwd' | null
@@ -48,13 +48,13 @@ let touchIntent = null; // 'fwd' | 'bwd' | null
 // ── Detección profesional de pasos (algoritmo pico-valle) ────
 // La magnitud del acelerómetro oscila entre ~7 y ~13 m/s² al caminar.
 // Un paso = subida por encima de STEP_HIGH + bajada por debajo de STEP_LOW.
-const STEP_HIGH   = 10.8; // umbral alto (pico del paso)
-const STEP_LOW    = 9.0;  // umbral bajo  (valle del paso)
+const STEP_HIGH = 10.8; // umbral alto (pico del paso)
+const STEP_LOW = 9.0;  // umbral bajo  (valle del paso)
 const STEP_GAP_MS = 220;  // mínimo ms entre pasos (~4 pasos/s máx)
-let smoothMag   = 9.81; // magnitud suavizada
-let peakSeen    = false; // ¿detectamos ya el pico?
-let lastStepMs  = 0;    // timestamp del último paso
-let stepCount   = 0;    // contador de pasos (para debug en HUD)
+let smoothMag = 9.81; // magnitud suavizada
+let peakSeen = false; // ¿detectamos ya el pico?
+let lastStepMs = 0;    // timestamp del último paso
+let stepCount = 0;    // contador de pasos (para debug en HUD)
 
 // ═══════════════════════════════════════════════════════════════
 // INICIO
@@ -73,7 +73,7 @@ async function launch() {
   // iOS 13+: permisos de sensores (deben pedirse en gesture de usuario)
   for (const E of [DeviceOrientationEvent, DeviceMotionEvent]) {
     if (typeof E?.requestPermission === 'function') {
-      try { await E.requestPermission(); } catch (_) {}
+      try { await E.requestPermission(); } catch (_) { }
     }
   }
 
@@ -83,8 +83,8 @@ async function launch() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: 'environment' },
-        width:      { ideal: 640 }, // Reducido para mejor rendimiento
-        height:     { ideal: 480 }  // Reducido para mejor rendimiento
+        width: { ideal: 640 }, // Reducido para mejor rendimiento
+        height: { ideal: 480 }  // Reducido para mejor rendimiento
       },
       audio: false
     });
@@ -106,7 +106,7 @@ async function launch() {
 
   // Sensores
   window.addEventListener('deviceorientation', onOrientation, true);
-  window.addEventListener('devicemotion',      onMotion,      true);
+  window.addEventListener('devicemotion', onMotion, true);
 
   // Controles táctiles de movimiento
   setupTouch();
@@ -114,7 +114,7 @@ async function launch() {
   // Mostrar experiencia
   splashLoading.classList.remove('on');
   splash.style.display = 'none';
-  hud.style.display    = 'block';
+  hud.style.display = 'block';
   btnPlace.style.display = 'block';
 
   showHud('Cargando portal McCORMICK...');
@@ -171,7 +171,7 @@ function setupTouch() {
     e.preventDefault();
   }, { passive: false });
 
-  document.addEventListener('touchend',    () => { touchIntent = null; }, { passive: true });
+  document.addEventListener('touchend', () => { touchIntent = null; }, { passive: true });
   document.addEventListener('touchcancel', () => { touchIntent = null; }, { passive: true });
 }
 
@@ -183,7 +183,7 @@ function onOrientation(e) {
   gyroReady = true;
 
   _euler.set(
-    THREE.MathUtils.degToRad(e.beta  ?? 0),
+    THREE.MathUtils.degToRad(e.beta ?? 0),
     THREE.MathUtils.degToRad(e.alpha ?? 0),
     THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
     'YXZ'
@@ -261,8 +261,8 @@ async function loadPortal() {
 
 // Estas variables guardan la posición y orientación INICIAL del portal
 // para que el eje de movimiento (portalOffset) sea correcto
-const portalOrigin    = new THREE.Vector3(); // posición inicial del portal
-const portalAxisDir   = new THREE.Vector3(); // dirección de "acercarse" = camera → portal
+const portalOrigin = new THREE.Vector3(); // posición inicial del portal
+const portalAxisDir = new THREE.Vector3(); // dirección de "acercarse" = camera → portal
 
 function placePortal() {
   if (!portalGroup || portalPlaced) return;
@@ -283,7 +283,7 @@ function placePortal() {
 
   scene.add(portalGroup);
   portalPlaced = true;
-  portalOffset  = 0;
+  portalOffset = 0;
   btnPlace.style.display = 'none';
   showHud('Toca la mitad inferior de la pantalla para avanzar');
 }
@@ -308,7 +308,7 @@ function renderLoop(ts) {
   // ── Movimiento con toque (continuo mientras se mantiene) ────
   if (portalPlaced) {
     if (touchIntent === 'fwd') {
-      moveVel = THREE.MathUtils.lerp(moveVel,  TOUCH_SPEED, 0.2);
+      moveVel = THREE.MathUtils.lerp(moveVel, TOUCH_SPEED, 0.2);
     } else if (touchIntent === 'bwd') {
       moveVel = THREE.MathUtils.lerp(moveVel, -TOUCH_SPEED, 0.2);
     } else {
@@ -319,7 +319,7 @@ function renderLoop(ts) {
     // Aplicar velocidad del toque al offset
     if (Math.abs(moveVel) > 0.001) {
       const newOffset = portalOffset + moveVel * dt;
-      const clamped   = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 4.0);
+      const clamped = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 4.0);
       if (clamped !== portalOffset) {
         portalOffset = clamped;
         applyPortalOffset();
@@ -398,7 +398,7 @@ function onExitPortal() {
 // Helpers UI
 // ═══════════════════════════════════════════════════════════════
 function showStatus(msg) { if (statusEl) statusEl.textContent = msg; }
-function showHud(msg)    { hud.textContent = msg; }
+function showHud(msg) { hud.textContent = msg; }
 function showError(msg) {
   splashLoading.classList.add('on');
   showStatus('');

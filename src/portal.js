@@ -67,19 +67,19 @@ function createCheckeredTexture() {
   canvas.width = 256;
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
-  
+
   // Colores del patrón (Rojo y Blanco)
   const colorRed = '#d32f2f'; // Un rojo más vivo
   const colorWhite = '#ffffff'; // Blanco
-  
+
   ctx.fillStyle = colorRed;
   ctx.fillRect(0, 0, 256, 256);
-  
+
   ctx.fillStyle = colorWhite;
   // Dibujar cuadros blancos para formar el patrón de ajedrez
   ctx.fillRect(0, 0, 128, 128);
   ctx.fillRect(128, 128, 128, 128);
-  
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -93,12 +93,12 @@ function buildFrameGeometry() {
   // Textura y Materiales
   const checkTex = createCheckeredTexture();
   checkTex.repeat.set(2, 4); // Repetición para las columnas frontales
-  
+
   const facadeMat = new THREE.MeshStandardMaterial({
     map: checkTex,
     roughness: 0.8,
   });
-  
+
   const doorMat = new THREE.MeshStandardMaterial({
     color: 0x333333, // Gris oscuro
     roughness: 0.4,
@@ -112,17 +112,17 @@ function buildFrameGeometry() {
   // Columna Izquierda
   const leftColTex = checkTex.clone();
   leftColTex.repeat.set(1.5, 4);
-  const leftCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({map: leftColTex, roughness: 0.8}));
+  const leftCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({ map: leftColTex, roughness: 0.8 }));
   leftCol.position.set(-(DOOR_W / 2 + COL_W / 2), DOOR_H / 2, 0);
-  
+
   // Columna Derecha
-  const rightCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({map: leftColTex, roughness: 0.8}));
+  const rightCol = new THREE.Mesh(new THREE.BoxGeometry(COL_W, DOOR_H, 0.2), new THREE.MeshStandardMaterial({ map: leftColTex, roughness: 0.8 }));
   rightCol.position.set((DOOR_W / 2 + COL_W / 2), DOOR_H / 2, 0);
 
   // Viga superior (Fachada)
   const topTex = checkTex.clone();
   topTex.repeat.set(5, 1);
-  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2, 1.2, 0.2), new THREE.MeshStandardMaterial({map: topTex, roughness: 0.8}));
+  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2, 1.2, 0.2), new THREE.MeshStandardMaterial({ map: topTex, roughness: 0.8 }));
   topBeam.position.set(0, DOOR_H + 0.6, 0);
 
   // 2. VESTÍBULO (Paredes interiores que dan profundidad)
@@ -130,10 +130,10 @@ function buildFrameGeometry() {
   // empezamos las paredes interiores exactamente en Z = -0.1
   const INNER_DEPTH = DEPTH - 0.1;
   const INNER_Z = -0.1 - (INNER_DEPTH / 2);
-  
+
   const wallTex = checkTex.clone();
   wallTex.repeat.set(INNER_DEPTH, DOOR_H); // Ajustar repetición por tamaño
-  const wallMat = new THREE.MeshStandardMaterial({map: wallTex, roughness: 0.9});
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.9 });
 
   // Pared interior izquierda
   const innerLeft = new THREE.Mesh(new THREE.PlaneGeometry(INNER_DEPTH, DOOR_H), wallMat);
@@ -148,11 +148,11 @@ function buildFrameGeometry() {
   // Techo interior
   const ceilTex = checkTex.clone();
   ceilTex.repeat.set(DOOR_W, INNER_DEPTH);
-  const ceilMat = new THREE.MeshStandardMaterial({map: ceilTex, roughness: 0.9});
+  const ceilMat = new THREE.MeshStandardMaterial({ map: ceilTex, roughness: 0.9 });
   const innerCeil = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, INNER_DEPTH), ceilMat);
   innerCeil.rotation.x = Math.PI / 2;
   innerCeil.position.set(0, DOOR_H, INNER_Z);
-  
+
   // (Piso interior café retirado a petición)
   // En su lugar, colocamos un piso "invisible" que actúa como portal (stencil)
   // para que la imagen 360 se pinte también sobre el piso del túnel y no se corte.
@@ -172,24 +172,24 @@ function buildFrameGeometry() {
   // 3. PUERTAS ABIERTAS CON DISEÑO DE PANELES (Fijadas al final del vestíbulo)
   const doorGroupL = new THREE.Group();
   doorGroupL.position.set(-DOOR_W / 2, 0, -DEPTH);
-  
+
   const doorL = createDoorMesh(DOOR_W / 2, DOOR_H, doorMat);
   doorL.position.set(DOOR_W / 4, 0, 0); // Eje de rotación en el borde izquierdo
   doorGroupL.add(doorL);
   // Abierta hacia ADENTRO (hacia el 360). 
   // 0.25 * PI = 45 grados (suficiente para verse claras y abiertas)
-  doorGroupL.rotation.y = -Math.PI * 0.25; 
+  doorGroupL.rotation.y = -Math.PI * 0.25;
 
   const doorGroupR = new THREE.Group();
   doorGroupR.position.set(DOOR_W / 2, 0, -DEPTH);
-  
+
   const doorR = createDoorMesh(DOOR_W / 2, DOOR_H, doorMat);
   doorR.position.set(-DOOR_W / 4, 0, 0); // Eje de rotación en el borde derecho
   doorGroupR.add(doorR);
   doorGroupR.rotation.y = Math.PI * 0.25; // Abierta hacia ADENTRO
 
   // Molduras doradas en el letrero superior
-  const goldMat = new THREE.MeshStandardMaterial({color: 0xC8A84B, roughness: 0.2, metalness: 0.8});
+  const goldMat = new THREE.MeshStandardMaterial({ color: 0xC8A84B, roughness: 0.2, metalness: 0.8 });
   const goldTrimTop = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2 + 0.1, 0.05, 0.25), goldMat);
   goldTrimTop.position.set(0, DOOR_H + 1.2, 0.05);
   const goldTrimBot = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + COL_W * 2 + 0.1, 0.05, 0.25), goldMat);
@@ -212,23 +212,23 @@ function createDoorMesh(w, h, mat) {
 
   // Marco izquierdo
   const left = new THREE.Mesh(new THREE.BoxGeometry(fw, h, d), mat);
-  left.position.set(-w/2 + fw/2, h/2, 0);
-  
+  left.position.set(-w / 2 + fw / 2, h / 2, 0);
+
   // Marco derecho
   const right = new THREE.Mesh(new THREE.BoxGeometry(fw, h, d), mat);
-  right.position.set(w/2 - fw/2, h/2, 0);
+  right.position.set(w / 2 - fw / 2, h / 2, 0);
 
   // Marco superior
-  const top = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, fw, d), mat);
-  top.position.set(0, h - fw/2, 0);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w - fw * 2, fw, d), mat);
+  top.position.set(0, h - fw / 2, 0);
 
   // Marco inferior
-  const bot = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, bw, d), mat);
-  bot.position.set(0, bw/2, 0);
+  const bot = new THREE.Mesh(new THREE.BoxGeometry(w - fw * 2, bw, d), mat);
+  bot.position.set(0, bw / 2, 0);
 
   // Panel central hundido
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(w - fw*2, h - fw - bw, pd), mat);
-  panel.position.set(0, bw + (h - fw - bw)/2, 0);
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(w - fw * 2, h - fw - bw, pd), mat);
+  panel.position.set(0, bw + (h - fw - bw) / 2, 0);
 
   g.add(left, right, top, bot, panel);
   return g;
@@ -249,7 +249,7 @@ function createMcCormickLabel() {
   ctx.font = '900 120px Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  
+
   // Sombra suave para dar volumen 3D a las letras
   ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
   ctx.shadowBlur = 8;
@@ -293,7 +293,7 @@ function buildInterior() {
 
   // Cargar imagen panorámica equirectangular
   const tex = new THREE.TextureLoader().load(
-    '/models/04316f8b-befd-4514-838e-47017f48e32a.jpeg',
+    '/models/360img.png',
     () => { /* cargada OK */ },
     undefined,
     (e) => console.warn('Error cargando panorama 360:', e)
@@ -310,7 +310,7 @@ function buildInterior() {
   );
 
   // Rotar la esfera para enfocar el altar (giramos 180° respecto al intento anterior)
-  sphere.rotation.y = Math.PI / 2;
+  sphere.rotation.y = (Math.PI / 2) - 0.05;
 
   sphere.renderOrder = 2;
   container.add(sphere);
@@ -318,19 +318,18 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
-  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
-  container.position.z = -2.0;
-  
-  // Para enfocar exactamente la zona de los tamales, la mesa y la alfombra (la parte de abajo de la imagen),
-  // tenemos que SUBIR la esfera. Al subir la esfera (números positivos), tu cámara queda abajo,
-  // mirando directamente hacia el suelo de la imagen. 
-  container.position.y = 20.0;
-  
-  // Escalar la esfera en el eje Z (profundidad) crea un efecto de "túnel" o pasillo largo.
-  // Esto aleja el altar (quita el zoom) pero mantiene el piso conectado a la puerta.
-  container.scale.set(1.2, 1.2, 2.5);
-  
+  // Alejamos el centro de la esfera un poco de la puerta
+  container.position.z = -5.0;
+
+  // Mantenemos la posición Y en 0 (o cerca de 0) para que la cámara no mire hacia el piso,
+  // sino directamente al centro del altar.
+  container.position.y = 0.0;
+
+  // Para darle más "ancho" y que no se vea tan apretada o jaloneada hacia atrás,
+  // aumentamos la escala en el eje X (horizontal) a 1.8. 
+  // Mantenemos Z en 4.0 para la profundidad (el "zoom out").
+  container.scale.set(1.8, 1.0, 4.0);
+
   container.renderOrder = 2;
 
   return container;
