@@ -35,12 +35,18 @@ let gyroReady = false;
 // La CÁMARA está FIJA en el origen. El PORTAL se acerca o aleja.
 // portalOffset > 0  →  portal se acerca (usuario avanza)
 // portalOffset < 0  →  portal se aleja  (usuario retrocede)
-let portalOffset = 0;   // metros acumulados desde la posición inicial
+let portalOffset = 0;   // posición actual interpolada
+let targetPortalOffset = 0; // posición objetivo a la que el portal intenta llegar suavemente
 let moveVel = 0;   // velocidad actual m/s (para el toque)
 
-const TOUCH_SPEED = 1.2;  // m/s con toque
+// ── Raycaster (para CTA) ──────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const screenCenter = new THREE.Vector2(0, 0); // Centro de la pantalla para raycast
+let ctaVisible = false;
+
+const TOUCH_SPEED = 2.0;  // m/s con toque (un poco más rápido)
 const MAX_DIST = 8.0;  // metros máx que puede alejarse el portal
-const STEP_MOVE = 1.5;  // metros que avanza el portal por cada paso detectado
+const STEP_MOVE = 0.8;  // metros que avanza por cada paso (pasos más cortos y frecuentes)
 
 // Touch
 let touchIntent = null; // 'fwd' | 'bwd' | null
@@ -237,13 +243,12 @@ function onMotion(event) {
 }
 
 function onStep() {
-  // Movimiento DIRECTO: cada paso detectado mueve el portal STEP_MOVE metros
-  // Sin integración de velocidad → sin drift, respuesta inmediata
   if (touchIntent === 'bwd') return; // si retrocediendo con toque, ignorar pasos
 
   stepCount++;
-  portalOffset = Math.min(portalOffset + STEP_MOVE, 4.0);
-  applyPortalOffset(); // actualizar posición inmediatamente
+  // En lugar de teletransportar la cámara, sumamos al "objetivo"
+  // El renderLoop se encargará de deslizar la cámara suavemente hacia ese objetivo
+  targetPortalOffset = Math.min(targetPortalOffset + STEP_MOVE, 4.0);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -284,6 +289,7 @@ function placePortal() {
   scene.add(portalGroup);
   portalPlaced = true;
   portalOffset = 0;
+  targetPortalOffset = 0;
   btnPlace.style.display = 'none';
   showHud('Toca la mitad inferior de la pantalla para avanzar');
 }
@@ -296,16 +302,15 @@ function renderLoop(ts) {
   const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.05) : 0.016;
   lastTs = ts;
 
-  // Balanceo cosmético si el giroscopio no tiene datos aún
+  // La cámara se queda estática si no hay giroscopio (se elimina el balanceo de flotación)
   if (!gyroReady) {
-    const t = ts * 0.001;
-    camera.rotation.set(Math.sin(t * 0.3) * 0.015, Math.sin(t * 0.2) * 0.03, 0);
+    camera.rotation.set(0, 0, 0);
   }
 
   // ── Animación de la Páprika (flotación + rotación) ──────────
   if (portalGroup?.userData.tick) portalGroup.userData.tick(ts);
 
-  // ── Movimiento con toque (continuo mientras se mantiene) ────
+  // ── Movimiento con toque y suavizado de pasos ────
   if (portalPlaced) {
     if (touchIntent === 'fwd') {
       moveVel = THREE.MathUtils.lerp(moveVel, TOUCH_SPEED, 0.2);
@@ -316,19 +321,40 @@ function renderLoop(ts) {
       if (Math.abs(moveVel) < 0.005) moveVel = 0;
     }
 
-    // Aplicar velocidad del toque al offset
+    // Aplicar velocidad del toque al objetivo
     if (Math.abs(moveVel) > 0.001) {
-      const newOffset = portalOffset + moveVel * dt;
-      const clamped = THREE.MathUtils.clamp(newOffset, -MAX_DIST, 4.0);
-      if (clamped !== portalOffset) {
-        portalOffset = clamped;
-        applyPortalOffset();
-      } else {
-        moveVel = 0;
-      }
+      targetPortalOffset = THREE.MathUtils.clamp(targetPortalOffset + moveVel * dt, -MAX_DIST, 4.0);
+    }
+
+    // INTERPOLACIÓN SUAVE (Lerp) de la posición actual hacia el objetivo
+    if (Math.abs(targetPortalOffset - portalOffset) > 0.001) {
+      // 5.0 es el factor de suavizado (mayor = más rígido, menor = más flotante)
+      portalOffset = THREE.MathUtils.lerp(portalOffset, targetPortalOffset, 5.0 * dt);
+      applyPortalOffset();
     }
 
     checkCrossing();
+  }
+
+  // ── Raycast para mostrar/ocultar CTA de Páprika ─────────────
+  if (insidePortal && portalGroup?.userData.getPaprika) {
+    const paprika = portalGroup.userData.getPaprika();
+    if (paprika) {
+      raycaster.setFromCamera(screenCenter, camera);
+      const intersects = raycaster.intersectObject(paprika, true);
+      
+      if (intersects.length > 0) {
+        if (!ctaVisible) {
+          ctaVisible = true;
+          productCard.classList.add('visible');
+        }
+      } else {
+        if (ctaVisible) {
+          ctaVisible = false;
+          productCard.classList.remove('visible');
+        }
+      }
+    }
   }
 
   renderer.clear(true, true, true);
@@ -380,8 +406,7 @@ function onEnterPortal() {
   cameraBg.style.transition = 'opacity 0.8s ease';
   cameraBg.style.opacity = '0';
   showHud('¡Bienvenido al mundo McCORMICK! · Toca arriba para salir');
-  // Mostrar tarjeta de producto con animación
-  setTimeout(() => productCard.classList.add('visible'), 600);
+  // El CTA ahora solo se muestra al mirar el producto (gestionado por Raycaster)
 }
 
 function onExitPortal() {
@@ -392,6 +417,7 @@ function onExitPortal() {
   showHud('Toca abajo para avanzar al portal');
   // Ocultar tarjeta de producto
   productCard.classList.remove('visible');
+  ctaVisible = false; // Resetear estado
 }
 
 // ═══════════════════════════════════════════════════════════════

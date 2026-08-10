@@ -44,7 +44,22 @@ export async function buildPortalGroup(loader) {
     frame.visible = enabled; // Ocultar la puerta cuando estás adentro
     // La Páprika aparece SOLO cuando se entra al portal
     if (paprikaMesh) paprikaMesh.visible = !enabled;
+
+    // MAGIA: Deslizar la esfera físicamente para arreglar el 360
+    if (enabled) {
+      // Afuera: La esfera se aleja para dar el efecto "zoom out"
+      interior.position.z = -15.0;
+      interior.position.y = -5.0;
+    } else {
+      // Adentro: La esfera "salta" hacia ti para que quedes exactamente en su centro
+      // Esto arregla completamente la vista 360 sin deformaciones ni ojos de pez
+      interior.position.z = -2.0;
+      interior.position.y = 0.0;
+    }
   };
+
+  // Exponer la páprika para el Raycaster (mostrar CTA al mirarla)
+  group.userData.getPaprika = () => paprikaMesh;
 
   // Animación de flotación de la Páprika (llamar desde renderLoop)
   group.userData.tick = (ts) => {
