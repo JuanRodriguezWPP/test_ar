@@ -277,14 +277,14 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Colocar a 2.1m enfrente de la mirada actual y bajarlo 1.2m para centrarlo verticalmente
-  portalOrigin.set(fwd.x * 2.1, -1.2, fwd.z * 2.1);
+  // Colocar a 1.8m enfrente de la mirada actual y bajarlo 1.3m para centrarlo verticalmente
+  portalOrigin.set(fwd.x * 1.8, -1.3, fwd.z * 1.8);
   portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
 
   // El portal siempre mira hacia la cámara, nivelado
-  portalGroup.lookAt(0, -1.2, 0);
+  portalGroup.lookAt(0, -1.3, 0);
 
   scene.add(portalGroup);
   portalPlaced = true;
@@ -313,11 +313,13 @@ function renderLoop(ts) {
   // ── Movimiento con toque y suavizado de pasos ────
   if (portalPlaced) {
     if (touchIntent === 'fwd') {
-      moveVel = THREE.MathUtils.lerp(moveVel, TOUCH_SPEED, 0.2);
+      // Mayor aceleración (0.35) para responder más rápido al toque
+      moveVel = THREE.MathUtils.lerp(moveVel, TOUCH_SPEED, 0.35);
     } else if (touchIntent === 'bwd') {
-      moveVel = THREE.MathUtils.lerp(moveVel, -TOUCH_SPEED, 0.2);
+      moveVel = THREE.MathUtils.lerp(moveVel, -TOUCH_SPEED, 0.35);
     } else {
-      moveVel *= 0.80;  // frenar rápido al soltar
+      // Frenado más seco al soltar para que no se sienta que resbala (0.60)
+      moveVel *= 0.60;
       if (Math.abs(moveVel) < 0.005) moveVel = 0;
     }
 
@@ -328,8 +330,8 @@ function renderLoop(ts) {
 
     // INTERPOLACIÓN SUAVE (Lerp) de la posición actual hacia el objetivo
     if (Math.abs(targetPortalOffset - portalOffset) > 0.001) {
-      // 5.0 es el factor de suavizado (mayor = más rígido, menor = más flotante)
-      portalOffset = THREE.MathUtils.lerp(portalOffset, targetPortalOffset, 5.0 * dt);
+      // 12.0 es el factor de suavizado (mayor = más rígido/responsivo, reduce la sensación de "pegado")
+      portalOffset = THREE.MathUtils.lerp(portalOffset, targetPortalOffset, 12.0 * dt);
       applyPortalOffset();
     }
 
@@ -376,8 +378,8 @@ function applyPortalOffset() {
 // Detección de cruce
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // Cuando portalOffset ≥ distancia inicial (2.1m), el portal cruzó la cámara
-  const threshold = 2.2;
+  // Cuando portalOffset ≥ distancia inicial (1.8m), el portal cruzó la cámara
+  const threshold = 1.9;
 
   const nowInside = portalOffset >= threshold;
 
