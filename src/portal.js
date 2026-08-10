@@ -44,22 +44,7 @@ export async function buildPortalGroup(loader) {
     frame.visible = enabled; // Ocultar la puerta cuando estás adentro
     // La Páprika aparece SOLO cuando se entra al portal
     if (paprikaMesh) paprikaMesh.visible = !enabled;
-
-    // MAGIA: Deslizar la esfera físicamente para arreglar el 360
-    if (enabled) {
-      // Afuera: La esfera se aleja para dar el efecto "zoom out"
-      interior.position.z = -15.0;
-      interior.position.y = -5.0;
-    } else {
-      // Adentro: La esfera "salta" hacia ti para que quedes exactamente en su centro
-      // Esto arregla completamente la vista 360 sin deformaciones ni ojos de pez
-      interior.position.z = -2.0;
-      interior.position.y = 0.0;
-    }
   };
-
-  // Exponer la páprika para el Raycaster (mostrar CTA al mirarla)
-  group.userData.getPaprika = () => paprikaMesh;
 
   // Animación de flotación de la Páprika (llamar desde renderLoop)
   group.userData.tick = (ts) => {
@@ -308,7 +293,7 @@ function buildInterior() {
 
   // Cargar imagen panorámica equirectangular
   const tex = new THREE.TextureLoader().load(
-    '/models/04316f8b-befd-4514-838e-47017f48e32a.jpeg',
+    '/models/360img_McCormick.jpg',
     () => { /* cargada OK */ },
     undefined,
     (e) => console.warn('Error cargando panorama 360:', e)
@@ -316,15 +301,7 @@ function buildInterior() {
 
   // Flip horizontal necesario para que la imagen se vea correcta desde adentro (BackSide)
   tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping; // Evita que se repita el techo en el piso
-
-  // ESCALAR LA TEXTURA (LA SOLUCIÓN REAL)
-  // Como la puerta es angosta y estamos a 3m de distancia, geométricamente solo vemos un ángulo pequeño de la esfera.
-  // Para ver "más" de la imagen, hacemos la imagen más pequeña en la esfera.
-  tex.center.set(0.5, 0.5);
-  // Aumentamos de 1.5 a 2.5 para alejar la imagen muchísimo más (hace la imagen casi un tercio de su tamaño original).
-  tex.repeat.set(-2.5, 2.5);
-
+  tex.repeat.x = -1;
   tex.colorSpace = THREE.SRGBColorSpace; // Corrección de color para Three.js moderno
 
   const sphere = new THREE.Mesh(
@@ -341,16 +318,18 @@ function buildInterior() {
   // Aplicar stencil por defecto (solo visible a través del hueco de la puerta)
   applyStencil(container, true);
 
-  // Tienes razón, ponerlo en el extremo (-50) genera un efecto "ojo de pez" o de globo muy fuerte.
-  // Vamos a buscar el punto intermedio perfecto: suficiente distancia para ver el altar completo, 
-  // pero sin que se deformen las orillas.
-  container.position.z = -15.0;
+  // Acercamos la esfera a la puerta para que el piso de la imagen comience 
+  // exactamente donde terminan tus pies, dando la sensación de entrar a una habitación.
+  container.position.z = -2.0;
 
-  // Como la esfera ya no está tan lejos, ajustamos un poco menos la altura para centrar el horizonte.
-  container.position.y = -5.0;
+  // Para enfocar exactamente la zona de los tamales, la mesa y la alfombra (la parte de abajo de la imagen),
+  // tenemos que SUBIR la esfera. Al subir la esfera (números positivos), tu cámara queda abajo,
+  // mirando directamente hacia el suelo de la imagen. 
+  container.position.y = 20.0;
 
-  // Escala 100% natural, sin túneles
-  container.scale.set(1.0, 1.0, 1.0);
+  // Escalar la esfera en el eje Z (profundidad) crea un efecto de "túnel" o pasillo largo.
+  // Esto aleja el altar (quita el zoom) pero mantiene el piso conectado a la puerta.
+  container.scale.set(1.2, 1.2, 2.5);
 
   container.renderOrder = 2;
 
