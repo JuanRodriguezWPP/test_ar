@@ -48,10 +48,13 @@ export async function buildPortalGroup(loader) {
 
   // Animación dinámica basada en los pasos del usuario
   group.userData.tick = (ts, offset = 0) => {
-    // 1. Animación de la Páprika
-    if (paprikaMesh) {
-      paprikaMesh.position.y = paprikaBaseY + Math.sin(ts * 0.0015) * 0.18;
-      paprikaMesh.rotation.y += 0.006;
+    // 1. Animación de la Páprika (solo el modelo, el wrapper y CTA se quedan estáticos)
+    if (paprikaMesh && paprikaMesh.children[0]) {
+      const model = paprikaMesh.children[0];
+      if (model.userData.baseY !== undefined) {
+        model.position.y = model.userData.baseY + Math.sin(ts * 0.0015) * 0.15;
+      }
+      model.rotation.y += 0.006;
     }
 
     // 2. Parallax Dinámico (Magia de Lejanía sin saltos)
@@ -384,12 +387,12 @@ async function loadPaprika(loader) {
     const hitboxMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     const hitbox = new THREE.Mesh(hitboxGeom, hitboxMat);
     hitbox.position.set(0, 0.5, 0); // Centro de masa relativo al wrapper
-    // Añadir el CTA 3D nativo justo a la izquierda y ligeramente arriba de la Páprika
+    // Añadir el CTA 3D nativo justo arriba de la Páprika
     const cta = create3D_CTA();
-    cta.position.set(-1.6, 0.8, 0); // Desplazado a la izquierda para no tapar el altar
+    cta.position.set(0, 1.4, 0); // Arriba del producto (centro en X)
     
-    // Girar ligeramente el letrero hacia el usuario para que sea muy legible
-    cta.rotation.y = Math.PI / 10;
+    // Totalmente recto frente al usuario
+    cta.rotation.y = 0;
     
     wrapper.add(cta);
 
