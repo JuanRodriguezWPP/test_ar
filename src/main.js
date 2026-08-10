@@ -352,18 +352,13 @@ function renderLoop(ts) {
       projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(projScreenMatrix);
 
-      // 2. Verificar si la Páprika (o cualquiera de sus mallas) "toca" tu pantalla
-      let isLookingAt = false;
-      paprika.traverse((child) => {
-        if (child.isMesh && child.geometry) {
-          if (frustum.intersectsObject(child)) {
-            isLookingAt = true;
-          }
-        }
-      });
+      // 2. FORZAR LA APARICIÓN DEL CTA INCONDICIONALMENTE (Prueba de Aislamiento)
+      // Si el CTA aparece ahora, sabemos que el HTML y CSS funcionan perfectamente,
+      // y que el problema radicaba en que el celular nunca reportaba estar "mirando" la páprika.
+      const isLookingAt = true;
 
-      // DIAGNÓSTICO EN PANTALLA: Si esto dice SÍ y no ves el CTA, es el CSS. Si dice NO, es el Frustum.
-      showHud(`¿Viendo la Páprika?: ${isLookingAt ? 'SÍ (CTA DEBERÍA APARECER)' : 'NO'}`);
+      // DIAGNÓSTICO EN PANTALLA
+      showHud(`Prueba Forzada: CTA DEBE ESTAR VISIBLE AHORA`);
 
       if (isLookingAt) {
         if (!ctaVisible) {
