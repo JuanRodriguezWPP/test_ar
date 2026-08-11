@@ -396,7 +396,7 @@ function onEnterPortal() {
   // Fade out cámara real → entorno 360 ocupa todo el espacio visual
   cameraBg.style.transition = 'opacity 0.8s ease';
   cameraBg.style.opacity = '0';
-  showHud('¡Bienvenido al mundo McCORMICK! · Toca arriba para salir');
+  showHud('¡Bienvenido al mundo McCORMICK!');
   // El CTA ahora solo se muestra al mirar el producto (gestionado por Raycaster)
 }
 
