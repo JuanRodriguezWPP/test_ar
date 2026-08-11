@@ -36,19 +36,14 @@ let gyroReady = false;
 // portalOffset < 0  →  portal se aleja  (usuario retrocede)
 let portalOffset = 0;   // posición actual interpolada
 let targetPortalOffset = 0; // posición objetivo a la que el portal intenta llegar suavemente
-let moveVel = 0;   // velocidad actual m/s (para el toque)
 
 // ── Raycaster (para CTA) ──────────────────────────────────────
 const raycaster = new THREE.Raycaster();
 const screenCenter = new THREE.Vector2(0, 0); // Centro de la pantalla para raycast
 let ctaVisible = false;
 
-const TOUCH_SPEED = 2.0;  // m/s con toque (un poco más rápido)
 const MAX_DIST = 8.0;  // metros máx que puede alejarse el portal
-const STEP_MOVE = 0.8;  // metros que avanza por cada paso (pasos más cortos y frecuentes)
-
-// Touch
-let touchIntent = null; // 'fwd' | 'bwd' | null
+const STEP_MOVE = 0.8;  // metros que avanza por cada paso
 
 // ── Detección profesional de pasos (algoritmo pico-valle) ────
 // La magnitud del acelerómetro oscila entre ~7 y ~13 m/s² al caminar.
@@ -164,7 +159,7 @@ function initThree() {
   });
 }
 
-// Touch: mitad inferior = avanzar, mitad superior = retroceder, y click en CTA 3D
+// Touch: click en CTA 3D
 // ═══════════════════════════════════════════════════════════════
 function setupTouch() {
   document.addEventListener('touchstart', e => {
@@ -194,15 +189,7 @@ function setupTouch() {
         }
       }
     }
-
-    // Movimiento (si no tocó el CTA)
-    const y = e.touches[0].clientY;
-    touchIntent = y > window.innerHeight * 0.5 ? 'fwd' : 'bwd';
-    e.preventDefault();
   }, { passive: false });
-
-  document.addEventListener('touchend', () => { touchIntent = null; }, { passive: true });
-  document.addEventListener('touchcancel', () => { touchIntent = null; }, { passive: true });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -267,11 +254,15 @@ function onMotion(event) {
 }
 
 function onStep() {
-  if (touchIntent === 'bwd') return; // si retrocediendo con toque, ignorar pasos
-
   stepCount++;
-  // En lugar de teletransportar la cámara, sumamos al "objetivo"
-  // El renderLoop se encargará de deslizar la cámara suavemente hacia ese objetivo
+  
+  // Feedback háptico (Vibración) al pisar
+  // La API vibrará 40ms en dispositivos móviles compatibles
+  if (navigator.vibrate) {
+    navigator.vibrate(40);
+  }
+
+  // Sumar al objetivo (caminamos hacia adelante)
   targetPortalOffset = Math.min(targetPortalOffset + STEP_MOVE, 4.0);
 }
 
@@ -315,7 +306,7 @@ function placePortal() {
   portalOffset = 0;
   targetPortalOffset = 0;
   btnPlace.style.display = 'none';
-  showHud('Toca la mitad inferior de la pantalla para avanzar');
+  showHud('Camina físicamente hacia adelante para entrar');
 }
 
 
@@ -334,29 +325,22 @@ function renderLoop(ts) {
   // ── Animación de la Páprika y la profundidad de la esfera ──────────
   if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset);
 
-  // ── Movimiento con toque y suavizado de pasos ────
+  // ── Movimiento suavizado de pasos y Oscilación de Cabeza ────
   if (portalPlaced) {
-    if (touchIntent === 'fwd') {
-      // Mayor aceleración (0.35) para responder más rápido al toque
-      moveVel = THREE.MathUtils.lerp(moveVel, TOUCH_SPEED, 0.35);
-    } else if (touchIntent === 'bwd') {
-      moveVel = THREE.MathUtils.lerp(moveVel, -TOUCH_SPEED, 0.35);
-    } else {
-      // Frenado más seco al soltar para que no se sienta que resbala (0.60)
-      moveVel *= 0.60;
-      if (Math.abs(moveVel) < 0.005) moveVel = 0;
-    }
-
-    // Aplicar velocidad del toque al objetivo
-    if (Math.abs(moveVel) > 0.001) {
-      targetPortalOffset = THREE.MathUtils.clamp(targetPortalOffset + moveVel * dt, -MAX_DIST, 4.0);
-    }
-
     // INTERPOLACIÓN SUAVE (Lerp) de la posición actual hacia el objetivo
     if (Math.abs(targetPortalOffset - portalOffset) > 0.001) {
-      // 12.0 es el factor de suavizado (mayor = más rígido/responsivo, reduce la sensación de "pegado")
       portalOffset = THREE.MathUtils.lerp(portalOffset, targetPortalOffset, 12.0 * dt);
       applyPortalOffset();
+
+      // Oscilación de cabeza (Head Bobbing) para dar la sensación física de caminar
+      // portalOffset representa la distancia recorrida.
+      // Usamos Math.sin para simular el subir y bajar natural al caminar.
+      const bobbingFreq = 6.0;  // Qué tan rápido oscila
+      const bobbingAmp = 0.08;  // Amplitud (8cm arriba/abajo)
+      camera.position.y = Math.sin(portalOffset * bobbingFreq) * bobbingAmp;
+    } else {
+      // Regresar suavemente la altura a la posición neutral si está quieto
+      camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
     }
 
     checkCrossing();
@@ -402,7 +386,7 @@ function checkCrossing() {
     if (portalOffset > 0.3) {
       showHud(`Pasos: ${stepCount} · Faltan ~${remaining}m para entrar`);
     } else {
-      showHud('Camina o toca abajo para avanzar al portal');
+      showHud('Camina físicamente hacia adelante para entrar');
     }
   }
 }
@@ -421,7 +405,7 @@ function onExitPortal() {
   // Restaurar cámara real al salir
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
-  showHud('Toca abajo para avanzar al portal');
+  showHud('Camina físicamente hacia adelante para entrar');
 }
 
 // ═══════════════════════════════════════════════════════════════
