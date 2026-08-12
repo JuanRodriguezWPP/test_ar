@@ -280,7 +280,7 @@ function setupTouch() {
         const ctaHit = rc.intersectObject(paprika, true).find(h => h.object.name === 'CTA_Plane');
         if (ctaHit) {
           showHud('¡Abriendo tienda McCormick!');
-          window.open('https://www.mccormick.com.mx', '_blank');
+          window.open('https://www.mccormick.com/', '_blank');
         }
       }
     }
