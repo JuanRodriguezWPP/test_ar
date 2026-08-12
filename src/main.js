@@ -82,11 +82,10 @@ class MadgwickAHRS {
   }
 }
 
-// Beta alto al inicio → converge instantáneamente al horizonte correcto en <0.3 s
-// Luego baja al valor de "suavizado fino" estándar para AR estable.
+// Beta alto al inicio para converger al horizonte instantáneamente
 const madgwick = new MadgwickAHRS(2.0);
 let madgwickReady = false;
-let madgwickFrames = 0; // contador de frames para bajar beta después de la convergencia
+let madgwickFrames = 0;
 
 // ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
@@ -97,6 +96,10 @@ const _screenQ = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 let gyroReady = false;
 let lastMotionTs = 0;
+
+// ── Auto-calibración de gravedad cruzada (Cross-Device Android/iOS)
+let gravityCalibrated = false;
+let invertGravity = false;
 
 // ═══════════════════════════════════════════════════════════════
 // LOCOMOCIÓN — Detección de pasos FIABLE (pico-valle en magnitud)
@@ -127,15 +130,10 @@ const FRICTION_STOP = 5.0;   // fricción AL PARAR (decae en ~0.5s)
 const WALK_EXPIRE_MS = 450;  // ms que se mantiene el estado "caminando" tras un paso
 let walkingExpireMs = 0;
 
-// ── Desplazamiento del portal ──────────────────────────────────
-let portalOffset = 0;    // metros que el portal se ha acercado (+ = cerca)
-let walkVelocity = 0;    // m/s sobre el eje del portal
-const MAX_DIST = 8.0;
-
-// ── Exploración dentro del portal ─────────────────────────────
-const innerPos = new THREE.Vector3();
-const innerVelocity = new THREE.Vector3();
-const MAX_INNER = 3.5;
+// ── Sistema Unificado de Locomoción Espacial ──────────────────
+const virtualPos = new THREE.Vector3();
+const userVelocity = new THREE.Vector3();
+const MAX_DIST = 8.0; // Radio máximo de caminata desde el centro del portal
 
 // ── Vectores de trabajo (pre-alojados, evitan GC en el loop) ──
 const _camFwd = new THREE.Vector3();
@@ -201,8 +199,6 @@ async function launch() {
   await loadPortal();
   showHud('Pulsa el botón para colocar el portal frente a ti');
 
-  // Asignar el listener solo DESPUéS de que el portal ya cargó.
-  // Si el usuario lo presionó antes, el click se ignora correctamente.
   btnPlace.addEventListener('click', placePortal, { once: true });
   renderer.setAnimationLoop(renderLoop);
 }
@@ -336,30 +332,48 @@ function onMotion(event) {
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  const ax = accG.x ?? 0;
-  const ay = accG.y ?? 0;
-  const az = accG.z ?? 0;
+  let ax = accG.x ?? 0;
+  let ay = accG.y ?? 0;
+  let az = accG.z ?? 0;
+
+  // ── Auto-calibración de hardware invertido ─────────────
+  // Algunos fabricantes de Android montan el sensor invertido.
+  // Cuando sostenemos el teléfono verticalmente (Portrait), la mano ejerce
+  // una fuerza hacia arriba (+Y). Si 'ay' es fuertemente negativo estando quieto,
+  // significa que el hardware está invertido y volcaría a Madgwick de cabeza.
+  const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
+  
+  if (!gravityCalibrated && rawMag > 8.5 && rawMag < 11.0) {
+    // Si la gravedad aparenta ir "hacia arriba" en el eje Y del teléfono
+    if (ay < -3.0) {
+      invertGravity = true;
+    }
+    // Si es un dispositivo iOS de Apple (que históricamente invierte la norma completa)
+    const isIOS = ['iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'].includes(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+    if (isIOS) invertGravity = true;
+    
+    gravityCalibrated = true;
+  }
+
+  if (invertGravity) {
+    ax = -ax; ay = -ay; az = -az;
+  }
 
   // ── PARTE 1: Madgwick — actualizar orientación ─────────────
   const gyro = event.rotationRate;
   if (gyro && gyro.alpha !== null) {
     madgwickReady = true;
-    gyroReady     = true;
+    gyroReady = true;
 
-    // MAPEO CORRECTO de ejes (W3C DeviceMotion Spec):
-    //   rotationRate.beta  = velocidad angular en eje X (Pitch: inclinar arriba/abajo)
-    //   rotationRate.gamma = velocidad angular en eje Y (Roll: inclinar izquierda/derecha)
-    //   rotationRate.alpha = velocidad angular en eje Z (Yaw: girar izquierda/derecha)
-    // Los ejes en rad/s que recibe Madgwick deben corresponder al sistema XYZ del sensor.
-    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0); // X (Pitch)
-    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y (Roll)
-    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z (Yaw)
+    // MAPEO ESTÁNDAR W3C (Crucial para que no se voltee en Androids avanzados)
+    const gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);  // X = Pitch
+    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y = Roll
+    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z = Yaw
 
-    // Bajar Beta progresivamente: arranque rápido (~0.5s de convergencia)
-    // después se fija en 0.033 para máxima suavidad y estabilidad en AR
+    // Baja la sensibilidad del filtro después de converger al horizonte
     if (madgwickFrames < 30) {
       madgwickFrames++;
-    } else {
+    } else if (madgwick.beta > 0.034) {
       madgwick.beta = 0.033;
     }
 
@@ -368,7 +382,7 @@ function onMotion(event) {
 
     // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
     deviceQuat.multiply(_corrQ);
-    // Corrección de rotación de pantalla (portrait/landscape)
+    // Corrección de rotación de pantalla
     _screenQ.setFromAxisAngle(
       _zAxis,
       -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
@@ -382,8 +396,8 @@ function onMotion(event) {
 
   // Magnitud del vector de aceleración (incluye gravedad ~9.81 en reposo)
   // Al caminar oscila entre ~7 y ~13 m/s². El algoritmo pico-valle detecta esto.
-  const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
-
+  // (rawMag ya fue calculado arriba para la calibración)
+  
   // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
 
@@ -415,35 +429,22 @@ function onMotion(event) {
 //   entre pasos cuando se sigue caminando.
 // ═══════════════════════════════════════════════════════════════
 function onStep(now) {
-  // Vector hacia adelante de la cámara proyectado en el plano XZ
+  // Vector hacia adelante de la cámara en el plano XZ
   _camFwd.set(0, 0, -1).applyQuaternion(deviceQuat);
   _camFwd.y = 0;
-  if (_camFwd.lengthSq() < 0.0001) return; // sin orientación todavía
+  if (_camFwd.lengthSq() < 0.0001) return;
   _camFwd.normalize();
 
-  if (insidePortal) {
-    // ── Dentro del portal: moverse en la dirección de la vista ──
-    walkingExpireMs = now + WALK_EXPIRE_MS;
-    // Dar impulso en la dirección actual de la cámara
-    innerVelocity.addScaledVector(_camFwd, WALK_SPEED * 0.8);
-    // Clampar velocidad máxima
-    const spd = innerVelocity.length();
-    if (spd > WALK_SPEED * 1.5) innerVelocity.multiplyScalar((WALK_SPEED * 1.5) / spd);
-
-  } else {
-    // ── Fuera del portal: avanzar/retroceder por el eje del portal ──
-    const dot = _camFwd.dot(portalAxisDir);
-
-    // Zona muerta ±0.15 para evitar activación accidental al girar 90°
-    const direction = dot > 0.15 ? 1 : dot < -0.15 ? -1 : 0;
-    if (direction === 0) return;
-
-    // Refrescar estado "caminando" para la fricción diferenciada
-    walkingExpireMs = now + WALK_EXPIRE_MS;
-
-    // Lerp del 80% hacia la velocidad objetivo: arranque rápido y natural.
-    // Si cambias de dirección, la velocidad revierte suavemente.
-    walkVelocity = THREE.MathUtils.lerp(walkVelocity, direction * WALK_SPEED, 0.8);
+  // El impulso SIEMPRE se da en la dirección de la mirada.
+  // Ya no hay divisiones "adentro" o "afuera" del portal, el espacio es continuo.
+  // Esto permite girar físicamente y salir caminando del portal.
+  walkingExpireMs = now + WALK_EXPIRE_MS;
+  userVelocity.addScaledVector(_camFwd, WALK_SPEED * 0.8);
+  
+  // Limitar velocidad máxima de la caminata
+  const spd = userVelocity.length();
+  if (spd > WALK_SPEED * 1.5) {
+    userVelocity.multiplyScalar((WALK_SPEED * 1.5) / spd);
   }
 }
 
@@ -455,7 +456,7 @@ async function loadPortal() {
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
 
-  // Pre-compilar shaders: evita el tirón/congelamiento al instanciar el portal en escena
+  // Pre-compilar shaders para evitar tartamudeo gráfico al caminar o colocar el portal
   scene.add(portalGroup);
   renderer.compile(scene, camera);
   scene.remove(portalGroup);
@@ -480,8 +481,8 @@ function placePortal() {
 
   scene.add(portalGroup);
   portalPlaced = true;
-  portalOffset = 0;
-  walkVelocity = 0;
+  virtualPos.set(0, 0, 0);
+  userVelocity.set(0, 0, 0);
   walkingExpireMs = 0;
 
   btnPlace.style.display = 'none';
@@ -497,84 +498,63 @@ function renderLoop(ts) {
 
   if (!gyroReady) camera.rotation.set(0, 0, 0);
 
-  // Tick del portal: animaciones internas + parallax de la esfera
-  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset, deviceQuat);
+  // Tick del portal (animaciones y parallax)
+  const toUser = virtualPos.clone().sub(portalOrigin);
+  const portalProgress = toUser.dot(portalAxisDir) + 3.5;
+  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalProgress, deviceQuat);
 
   if (portalPlaced) {
     const now = performance.now();
     const isWalking = now < walkingExpireMs;
 
-    // Fricción diferenciada (frame-rate independent):
-    //   Mientras camina: FRICTION_WALK=0.8 → casi no frena entre pasos (fluido)
-    //   Al parar:        FRICTION_STOP=5.0 → para en ~0.5s (natural)
+    // Fricción diferenciada: caminata continua y detención natural
     const friction = isWalking ? FRICTION_WALK : FRICTION_STOP;
     const dampFactor = Math.max(0, 1 - friction * dt);
 
-    if (insidePortal) {
-      // ── Exploración dentro del portal ────────────────────────
-      innerVelocity.multiplyScalar(dampFactor);
+    userVelocity.multiplyScalar(dampFactor);
+    const speed = userVelocity.length();
 
-      const speed = innerVelocity.length();
-      if (speed > 0.005) {
-        innerPos.x = THREE.MathUtils.clamp(innerPos.x + innerVelocity.x * dt, -MAX_INNER, MAX_INNER);
-        innerPos.z = THREE.MathUtils.clamp(innerPos.z + innerVelocity.z * dt, -MAX_INNER, MAX_INNER);
-        camera.position.x = innerPos.x;
-        camera.position.z = innerPos.z;
-
-        // Head bobbing proporcional a la velocidad de desplazamiento
-        const bobbingAmt = Math.sin(ts * 0.007) * Math.min(speed * 0.03, 0.05);
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingAmt, 8.0 * dt);
-      } else {
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
+    // Actualizar posición virtual si hay movimiento
+    if (speed > 0.005) {
+      virtualPos.addScaledVector(userVelocity, dt);
+      
+      // Limitar distancia máxima desde el portal para no perderse en el vacío
+      const offset = virtualPos.clone().sub(portalOrigin);
+      if (offset.length() > MAX_DIST) {
+        offset.clampLength(0, MAX_DIST);
+        virtualPos.copy(portalOrigin).add(offset);
       }
 
+      // Head bobbing (cabeceo)
+      const bobbingAmt = Math.sin(ts * 0.007) * Math.min(speed * 0.035, 0.065);
+      camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingAmt, 8.0 * dt);
     } else {
-      // ── Locomoción hacia / desde el portal ───────────────────
-      walkVelocity *= dampFactor;
-
-      if (Math.abs(walkVelocity) > 0.003) {
-        portalOffset = THREE.MathUtils.clamp(
-          portalOffset + walkVelocity * dt,
-          -MAX_DIST,
-          MAX_DIST
-        );
-        applyPortalOffset();
-
-        // Head bobbing proporcional a la velocidad
-        const bobbingAmt = Math.abs(walkVelocity) > 0.1
-          ? Math.sin(ts * 0.007) * Math.min(Math.abs(walkVelocity) * 0.035, 0.065)
-          : 0;
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingAmt, 8.0 * dt);
-      } else {
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
-      }
+      userVelocity.set(0, 0, 0);
+      camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
     }
 
-    checkCrossing();
+    // La cámara SIEMPRE se queda en el origen (0,0,0) para no desfasar el fondo AR.
+    // Lo que se mueve es el mundo entero (portalGroup) en sentido inverso al usuario.
+    portalGroup.position.copy(portalOrigin).sub(virtualPos);
+
+    checkCrossing(toUser);
   }
 
   renderer.clear(true, true, true);
   renderer.render(scene, camera);
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Helper: mover el portal según portalOffset
-// ═══════════════════════════════════════════════════════════════
-function applyPortalOffset() {
-  if (!portalGroup || !portalPlaced) return;
-  // offset positivo → portal se acerca a la cámara (usuario avanza)
-  portalGroup.position
-    .copy(portalOrigin)
-    .addScaledVector(portalAxisDir, -portalOffset);
-}
+
 
 // ═══════════════════════════════════════════════════════════════
 // Detección de cruce del portal
 // ═══════════════════════════════════════════════════════════════
-function checkCrossing() {
-  // El portal se colocó a 3.5m → cruce cuando el offset supera 3.6m
-  const threshold = 3.6;
-  const nowInside = portalOffset >= threshold;
+function checkCrossing(toUserOffset) {
+  // Ecuación de plano: calculamos de qué lado del marco de la puerta está el usuario
+  const distToPlane = toUserOffset.dot(portalAxisDir);
+  
+  // Si distToPlane > 0, el usuario ha cruzado físicamente la entrada del portal
+  const nowInside = distToPlane > 0;
 
   if (nowInside && !insidePortal) {
     insidePortal = true;
@@ -585,8 +565,8 @@ function checkCrossing() {
   }
 
   if (!insidePortal) {
-    const remaining = Math.max(0, threshold - portalOffset).toFixed(1);
-    if (portalOffset > 0.3) {
+    const remaining = Math.max(0, -distToPlane).toFixed(1);
+    if (remaining > 0.3) {
       showHud(`Faltan ~${remaining}m para entrar`);
     } else {
       showHud('Camina hacia el portal para entrar');
@@ -606,12 +586,6 @@ function onExitPortal() {
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
   showHud('Camina hacia el portal para entrar');
-
-  // Resetear posición interna al salir
-  innerPos.set(0, 0, 0);
-  innerVelocity.set(0, 0, 0);
-  camera.position.x = 0;
-  camera.position.z = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════
