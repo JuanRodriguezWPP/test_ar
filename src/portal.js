@@ -37,36 +37,85 @@ export async function buildPortalGroup(loader) {
     group.add(paprikaMesh);
   }
 
-  // ── API pública ───────────────────────────────────────────────
+  // ── Estado de rotación táctil (scope del grupo) ───────────────────
+  let modelRotY = 0;          // ángulo acumulado de rotación manual
+  let rotInertia = 0;         // velocidad angular de inercia post-gesto
+  let isUserDragging = false; // ¿usuario arrastrando en este momento?
+
+  // ── API pública ────────────────────────────────────────────────
   group.userData.setStencil = (enabled) => {
-    applyStencil(interior, enabled);      // enabled=true → solo por el hueco; false → todo el espacio
+    applyStencil(interior, enabled);
     stencilMesh.visible = enabled;
-    frame.visible = enabled; // Ocultar la puerta cuando estás adentro
-    // La Páprika aparece SOLO cuando se entra al portal
+    frame.visible = enabled;
     if (paprikaMesh) paprikaMesh.visible = !enabled;
   };
 
-  // Animación dinámica basada en los pasos del usuario
+  // Exponer el wrapper de la páprika para raycast desde main.js
+  group.userData.getPaprika = () => paprikaMesh;
+
+  // ── Interacción táctil: rotación del modelo GLB ────────────────
+
+  // Al iniciar el toque: congelar inercia y capturar ángulo actual
+  group.userData.onTouchStart = () => {
+    isUserDragging = true;
+    rotInertia = 0;
+    // Capturar rotación actual del modelo como base para el gesto
+    if (paprikaMesh?.children[0]) {
+      modelRotY = paprikaMesh.children[0].rotation.y;
+    }
+  };
+
+  // Durante el arrastre: rotar directamente con el dedo
+  group.userData.onTouchDrag = (dx /*, dy no usado */) => {
+    if (!paprikaMesh?.children[0]) return;
+    const sensitivity = 0.008; // radianes por píxel
+    const delta = dx * sensitivity;
+    rotInertia = delta;         // guardar último delta para la inercia
+    modelRotY += delta;
+    paprikaMesh.children[0].rotation.y = modelRotY;
+  };
+
+  // Al soltar el dedo: iniciar inercia con el último delta conocido
+  group.userData.onTouchEnd = () => {
+    isUserDragging = false;
+    // rotInertia ya tiene el último delta; decaerá en tick()
+  };
+
+  // ── Tick de animación ───────────────────────────────────────────
   group.userData.tick = (ts, offset = 0) => {
-    // 1. Animación de la Páprika (solo el modelo, el wrapper y CTA se quedan estáticos)
-    if (paprikaMesh && paprikaMesh.children[0]) {
+    if (paprikaMesh?.children[0]) {
       const model = paprikaMesh.children[0];
+
+      // Flotación vertical (siempre activa)
       if (model.userData.baseY !== undefined) {
         model.position.y = model.userData.baseY + Math.sin(ts * 0.0015) * 0.15;
       }
-      model.rotation.y += 0.006;
+
+      // Rotación del modelo: tres fases
+      if (isUserDragging) {
+        // Fase 1 — Control directo: ya se aplica en onTouchDrag() en tiempo real
+      } else if (Math.abs(rotInertia) > 0.0002) {
+        // Fase 2 — Inercia post-gesto: decay exponencial 92% por frame (~60fps)
+        rotInertia *= 0.92;
+        modelRotY += rotInertia;
+        model.rotation.y = modelRotY;
+      } else {
+        // Fase 3 — Auto-rotación suave (cuando no hay interacción)
+        model.rotation.y += 0.006;
+        modelRotY = model.rotation.y; // mantener sincronizado
+      }
     }
 
-    // 2. Parallax Dinámico (Magia de Lejanía sin saltos)
-    // Cuando offset es 0 (estás lejos de la puerta), la esfera está a -15m (mucha profundidad).
-    // Cuando llegas a la puerta (offset ≈ 2.0), la esfera se acerca suavemente a -2m 
-    // para que estés exactamente en el centro y no haya deformación de ojo de pez.
-    const progress = Math.min(Math.max(offset / 2.0, 0.0), 1.0);
+    // Parallax dinámico de la esfera 360°
+    // offset 0 → esfera a -15m (mucha profundidad)
+    // offset ≥3 → esfera a -2m (usuario dentro del portal)
+    const progress = Math.min(Math.max(offset / 3.0, 0.0), 1.0);
     interior.position.z = -15.0 + (13.0 * progress);
   };
 
   return group;
 }
+
 
 // ─── Marco del portal ─────────────────────────────────────────
 async function loadFrame(loader) {
@@ -377,6 +426,10 @@ async function loadPaprika(loader) {
     const center = new THREE.Vector3();
     bbox.getCenter(center);
     model.position.set(-center.x * s, -bbox.min.y * s, -center.z * s);
+
+    // Guardar la altura neutra del modelo para que la flotación vertical funcione
+    // (sin esto, el tick() revierte el model.position.y a baseY=undefined y no anima)
+    model.userData.baseY = model.position.y;
 
     // Envolver en un grupo para que la rotación sea pura
     const wrapper = new THREE.Group();

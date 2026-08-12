@@ -34,16 +34,18 @@ let gyroReady = false;
 // La CÁMARA está FIJA en el origen. El PORTAL se acerca o aleja.
 // portalOffset > 0  →  portal se acerca (usuario avanza)
 // portalOffset < 0  →  portal se aleja  (usuario retrocede)
-let portalOffset = 0;   // posición actual interpolada
-let targetPortalOffset = 0; // posición objetivo a la que el portal intenta llegar suavemente
+let portalOffset = 0;       // posición actual en metros (+ = portal cerca, - = portal lejos)
+let walkVelocity = 0;       // velocidad de caminata m/s (+ = avanzar hacia portal, - = retroceder)
+const WALK_SPEED   = 1.4;   // velocidad máxima de paso m/s
+const WALK_FRICTION = 4.5;  // tasa de desaceleración por fricción (frame-rate independent)
 
 // ── Raycaster (para CTA) ──────────────────────────────────────
 const raycaster = new THREE.Raycaster();
 const screenCenter = new THREE.Vector2(0, 0); // Centro de la pantalla para raycast
 let ctaVisible = false;
 
-const MAX_DIST = 8.0;  // metros máx que puede alejarse el portal
-const STEP_MOVE = 0.8;  // metros que avanza por cada paso
+const MAX_DIST = 8.0;       // metros máx que puede alejarse el portal
+const DRAG_THRESHOLD = 12;  // píxeles mínimos de arrastre para distinguir drag de tap
 
 // ── Detección profesional de pasos (algoritmo pico-valle) ────
 // La magnitud del acelerómetro oscila entre ~7 y ~13 m/s² al caminar.
@@ -52,9 +54,12 @@ const STEP_HIGH = 10.8; // umbral alto (pico del paso)
 const STEP_LOW = 9.0;  // umbral bajo  (valle del paso)
 const STEP_GAP_MS = 220;  // mínimo ms entre pasos (~4 pasos/s máx)
 let smoothMag = 9.81; // magnitud suavizada
-let peakSeen = false; // ¿detectamos ya el pico?
-let lastStepMs = 0;    // timestamp del último paso
-let stepCount = 0;    // contador de pasos (para debug en HUD)
+let peakSeen = false;         // ¿detectamos ya el pico?
+let lastStepMs = 0;           // timestamp del último paso
+let stepCount = 0;            // contador de pasos (para debug en HUD)
+let isWalking = false;        // ¿usuario activamente caminando?
+let walkingExpireMs = 0;      // timestamp en que expira el estado walking
+const BOBBING_ACTIVE_MS = 700; // ms de head bobbing tras el último paso detectado
 
 // ═══════════════════════════════════════════════════════════════
 // INICIO
@@ -159,37 +164,66 @@ function initThree() {
   });
 }
 
-// Touch: click en CTA 3D
+// Touch: distinguir tap (→ CTA) de drag (→ rotar modelo GLB)
 // ═══════════════════════════════════════════════════════════════
 function setupTouch() {
-  document.addEventListener('touchstart', e => {
-    if (!portalPlaced) return;
-    if (e.target.closest('button')) return; // ignorar botones UI
+  let tapStartX = 0, tapStartY = 0;
+  let isDragging = false;
 
-    // ── INTERACCIÓN 3D (Click en CTA) ──
-    if (insidePortal && portalGroup?.userData.getPaprika) {
+  document.addEventListener('touchstart', e => {
+    if (e.target.closest('button')) return;
+    tapStartX = e.touches[0].clientX;
+    tapStartY = e.touches[0].clientY;
+    isDragging = false;
+
+    // Notificar al modelo para resetear inercia
+    if (insidePortal && portalGroup?.userData.onTouchStart) {
+      portalGroup.userData.onTouchStart();
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (!insidePortal || !portalPlaced) return;
+    const dx = e.touches[0].clientX - tapStartX;
+    const dy = e.touches[0].clientY - tapStartY;
+
+    if (!isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+      isDragging = true;
+    }
+
+    if (isDragging && portalGroup?.userData.onTouchDrag) {
+      // Pasar delta incremental (no absoluto) para mayor precisión
+      portalGroup.userData.onTouchDrag(dx, dy);
+      tapStartX = e.touches[0].clientX;
+      tapStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    // Notificar al modelo para iniciar inercia
+    if (insidePortal && portalGroup?.userData.onTouchEnd) {
+      portalGroup.userData.onTouchEnd();
+    }
+
+    // Tap corto (sin drag) → raycast al CTA 3D
+    if (!isDragging && insidePortal && portalGroup?.userData.getPaprika) {
       const paprika = portalGroup.userData.getPaprika();
       if (paprika) {
-        // Actualizar matriz de la escena para asegurar que el Raycaster acierta
         scene.updateMatrixWorld(true);
-
-        const nx = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
-        const ny = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
-        
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
-        
-        const intersects = raycaster.intersectObject(paprika, true);
+        const nx = (tapStartX / window.innerWidth) * 2 - 1;
+        const ny = -(tapStartY / window.innerHeight) * 2 + 1;
+        const rc = new THREE.Raycaster();
+        rc.setFromCamera(new THREE.Vector2(nx, ny), camera);
+        const intersects = rc.intersectObject(paprika, true);
         const ctaHit = intersects.find(hit => hit.object.name === 'CTA_Plane');
-        
         if (ctaHit) {
           showHud('¡Abriendo tienda McCormick!');
           window.open('https://www.mccormick.com.mx', '_blank');
-          return; // Detener ejecución para no caminar
         }
       }
     }
-  }, { passive: false });
+    isDragging = false;
+  }, { passive: true });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -255,15 +289,31 @@ function onMotion(event) {
 
 function onStep() {
   stepCount++;
-  
-  // Feedback háptico (Vibración) al pisar
-  // La API vibrará 40ms en dispositivos móviles compatibles
-  if (navigator.vibrate) {
-    navigator.vibrate(40);
-  }
+  if (navigator.vibrate) navigator.vibrate(35);
 
-  // Sumar al objetivo (caminamos hacia adelante)
-  targetPortalOffset = Math.min(targetPortalOffset + STEP_MOVE, 4.0);
+  // ── Determinar dirección de marcha ───────────────────────────
+  // Proyectamos el vector «hacia adelante» de la cámara sobre el plano XZ
+  // y comparamos con el eje del portal (portalAxisDir).
+  // dot > 0  → cámara apunta hacia el portal  → AVANZAR
+  // dot < 0  → cámara apunta lejos del portal  → RETROCEDER
+  const camFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
+  camFwd.y = 0;
+  if (camFwd.length() < 0.01) return; // sin orientación giroscopio aún
+  camFwd.normalize();
+
+  const dot = camFwd.dot(portalAxisDir);
+  // Zona muerta ±0.2 para evitar movimiento con giros laterales de 90°
+  const direction = dot > 0.2 ? 1 : dot < -0.2 ? -1 : 0;
+  if (direction === 0) return;
+
+  // ── Aplicar impulso de velocidad (aceleración progresiva) ────
+  // Lerp de 0.75 da un arranque inmediato pero natural.
+  // Si ya se iba en sentido contrario, el lerp revierte suavemente.
+  walkVelocity = THREE.MathUtils.lerp(walkVelocity, direction * WALK_SPEED, 0.75);
+
+  // ── Activar head bobbing por 700ms ───────────────────────────
+  isWalking = true;
+  walkingExpireMs = performance.now() + BOBBING_ACTIVE_MS;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -292,8 +342,8 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Colocar a 2.0m enfrente de la mirada actual y bajarlo 1.3m para centrarlo verticalmente
-  portalOrigin.set(fwd.x * 2.0, -1.3, fwd.z * 2.0);
+  // Colocar a 3.0m enfrente de la mirada actual y bajarlo 1.3m para centrarlo verticalmente
+  portalOrigin.set(fwd.x * 3.0, -1.3, fwd.z * 3.0);
   portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
@@ -304,7 +354,7 @@ function placePortal() {
   scene.add(portalGroup);
   portalPlaced = true;
   portalOffset = 0;
-  targetPortalOffset = 0;
+  walkVelocity = 0;
   btnPlace.style.display = 'none';
   showHud('Camina físicamente hacia adelante para entrar');
 }
@@ -325,21 +375,29 @@ function renderLoop(ts) {
   // ── Animación de la Páprika y la profundidad de la esfera ──────────
   if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset);
 
-  // ── Movimiento suavizado de pasos y Oscilación de Cabeza ────
+  // ── Física de locomoción + Head Bobbing temporal ────────────
   if (portalPlaced) {
-    // INTERPOLACIÓN SUAVE (Lerp) de la posición actual hacia el objetivo
-    if (Math.abs(targetPortalOffset - portalOffset) > 0.001) {
-      portalOffset = THREE.MathUtils.lerp(portalOffset, targetPortalOffset, 12.0 * dt);
-      applyPortalOffset();
+    // 1. Desaceleración por fricción — FRAME-RATE INDEPENDENT
+    //    A 30 FPS: walkVelocity *= (1 - 4.5 * 0.033) ≈ 0.85  por frame
+    //    A 60 FPS: walkVelocity *= (1 - 4.5 * 0.016) ≈ 0.93  por frame
+    //    → misma desaceleración percibida en ambos casos
+    walkVelocity *= Math.max(0, 1 - WALK_FRICTION * dt);
 
-      // Oscilación de cabeza (Head Bobbing) para dar la sensación física de caminar
-      // portalOffset representa la distancia recorrida.
-      // Usamos Math.sin para simular el subir y bajar natural al caminar.
-      const bobbingFreq = 6.0;  // Qué tan rápido oscila
-      const bobbingAmp = 0.08;  // Amplitud (8cm arriba/abajo)
-      camera.position.y = Math.sin(portalOffset * bobbingFreq) * bobbingAmp;
+    // 2. Integrar posición desde velocidad
+    if (Math.abs(walkVelocity) > 0.002) {
+      portalOffset = Math.min(
+        Math.max(portalOffset + walkVelocity * dt, -MAX_DIST),
+        MAX_DIST
+      );
+      applyPortalOffset();
+    }
+
+    // 3. Head Bobbing basado en tiempo (ts), NO en posición
+    //    Solo activo los BOBBING_ACTIVE_MS ms tras el último paso
+    if (performance.now() < walkingExpireMs) {
+      camera.position.y = Math.sin(ts * 0.006) * 0.075;
     } else {
-      // Regresar suavemente la altura a la posición neutral si está quieto
+      isWalking = false;
       camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
     }
 
@@ -367,8 +425,8 @@ function applyPortalOffset() {
 // Detección de cruce
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // Cuando portalOffset ≥ distancia inicial (2.0m), el portal cruzó la cámara
-  const threshold = 2.1;
+  // Cuando portalOffset ≥ distancia inicial (3.0m), el portal cruzó la cámara
+  const threshold = 3.1;
 
   const nowInside = portalOffset >= threshold;
 
