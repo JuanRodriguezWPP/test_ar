@@ -341,10 +341,11 @@ function onMotion(event) {
     madgwickReady = true;
     gyroReady     = true;
 
-    // DeviceMotion reporta rotationRate en grados/s → convertir a rad/s
-    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0);
-    const gy = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
-    const gz = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
+    // DeviceMotion reporta rotationRate en grados/s.
+    // X (Pitch) = beta, Y (Roll) = gamma, Z (Yaw) = alpha
+    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0); // Eje X
+    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Eje Y
+    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Eje Z
 
     madgwick.update(gx, gy, gz, ax, ay, az, dt);
     madgwick.toThreeQuat(deviceQuat);
@@ -437,6 +438,13 @@ async function loadPortal() {
   const loader = new GLTFLoader();
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
+
+  // Pre-compilar shaders en la memoria caché del GPU:
+  // Al agregarlo y compilarlo en este instante (mientras la pantalla aún no muestra la cámara 3D),
+  // evitamos el congelamiento (stutter) de milisegundos cuando el usuario pulse "Colocar portal".
+  scene.add(portalGroup);
+  renderer.compile(scene, camera);
+  scene.remove(portalGroup);
 }
 
 // ═══════════════════════════════════════════════════════════════
