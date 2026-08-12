@@ -4,95 +4,34 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ═══════════════════════════════════════════════════════════════
 // UI refs
 // ═══════════════════════════════════════════════════════════════
-const splash        = document.getElementById('splash');
+const splash = document.getElementById('splash');
 const splashLoading = document.getElementById('splash-loading');
-const statusEl      = document.getElementById('status-text');
-const btnOpen       = document.getElementById('btn-open');
-const errorMsg      = document.getElementById('error-msg');
-const hud           = document.getElementById('hud');
-const btnPlace      = document.getElementById('btn-place');
-const cameraBg      = document.getElementById('camera-bg');
+const statusEl = document.getElementById('status-text');
+const btnOpen = document.getElementById('btn-open');
+const errorMsg = document.getElementById('error-msg');
+const hud = document.getElementById('hud');
+const btnPlace = document.getElementById('btn-place');
+const cameraBg = document.getElementById('camera-bg');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
 // ═══════════════════════════════════════════════════════════════
 let renderer, scene, camera;
-let portalGroup  = null;
+let portalGroup = null;
 let portalPlaced = false;
 let insidePortal = false;
-let lastTs       = 0;
+let lastTs = 0;
 
 // ═══════════════════════════════════════════════════════════════
-// MADGWICK AHRS — Fusión giroscopio + acelerómetro (inline)
-// Sebastian Madgwick (2010). Beta=0.033 es el valor estándar para AR.
-// Proporciona un quaternion estable y sin deriva para la orientación.
+// Orientación y Sensores
 // ═══════════════════════════════════════════════════════════════
-class MadgwickAHRS {
-  constructor(beta = 0.033) {
-    this.beta = beta;
-    this.q0 = 1; this.q1 = 0; this.q2 = 0; this.q3 = 0;
-  }
-
-  // gx/gy/gz en rad/s   ax/ay/az en m/s²   dt en segundos
-  update(gx, gy, gz, ax, ay, az, dt) {
-    let { q0, q1, q2, q3, beta } = this;
-    let recipNorm, s0, s1, s2, s3;
-    let qDot0, qDot1, qDot2, qDot3;
-
-    qDot0 = 0.5 * (-q1*gx - q2*gy - q3*gz);
-    qDot1 = 0.5 * ( q0*gx + q2*gz - q3*gy);
-    qDot2 = 0.5 * ( q0*gy - q1*gz + q3*gx);
-    qDot3 = 0.5 * ( q0*gz + q1*gy - q2*gx);
-
-    const accMag = Math.sqrt(ax*ax + ay*ay + az*az);
-    if (accMag > 0.001) {
-      recipNorm = 1.0 / accMag;
-      ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
-
-      const _2q0=2*q0, _2q1=2*q1, _2q2=2*q2, _2q3=2*q3;
-      const _4q0=4*q0, _4q1=4*q1, _4q2=4*q2;
-      const _8q1=8*q1, _8q2=8*q2;
-      const q0q0=q0*q0, q1q1=q1*q1, q2q2=q2*q2, q3q3=q3*q3;
-
-      s0 = _4q0*q2q2 + _2q2*ax + _4q0*q1q1 - _2q1*ay;
-      s1 = _4q1*q3q3 - _2q3*ax + 4*q0q0*q1 - _2q0*ay - _4q1 + _8q1*q1q1 + _8q1*q2q2 + _4q1*az;
-      s2 = 4*q0q0*q2 + _2q0*ax + _4q2*q3q3 - _2q3*ay - _4q2 + _8q2*q1q1 + _8q2*q2q2 + _4q2*az;
-      s3 = 4*q1q1*q3 - _2q1*ax + 4*q2q2*q3 - _2q2*ay;
-
-      recipNorm = 1.0 / Math.sqrt(s0*s0 + s1*s1 + s2*s2 + s3*s3);
-      if (isFinite(recipNorm)) {
-        s0 *= recipNorm; s1 *= recipNorm; s2 *= recipNorm; s3 *= recipNorm;
-        qDot0 -= beta * s0; qDot1 -= beta * s1;
-        qDot2 -= beta * s2; qDot3 -= beta * s3;
-      }
-    }
-
-    q0 += qDot0 * dt; q1 += qDot1 * dt;
-    q2 += qDot2 * dt; q3 += qDot3 * dt;
-
-    recipNorm = 1.0 / Math.sqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
-    this.q0 = q0*recipNorm; this.q1 = q1*recipNorm;
-    this.q2 = q2*recipNorm; this.q3 = q3*recipNorm;
-  }
-
-  toThreeQuat(target) {
-    // THREE.js espera (x, y, z, w), Madgwick devuelve (q0=w, q1=x, q2=y, q3=z)
-    target.set(this.q1, this.q2, this.q3, this.q0);
-    return target;
-  }
-}
-
-const madgwick    = new MadgwickAHRS(0.033);
-let madgwickReady = false;
-
-// ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
-const _euler     = new THREE.Euler();
+const _euler = new THREE.Euler();
 // Corrección: sistema del acelerómetro (Z↑) → sistema de Three.js (Y↑)
-const _corrQ     = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-const _screenQ   = new THREE.Quaternion();
-const _zAxis     = new THREE.Vector3(0, 0, 1);
-let gyroReady    = false;
+const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const _screenQ = new THREE.Quaternion();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+let gyroReady = false;
 let lastMotionTs = 0;
 
 // ═══════════════════════════════════════════════════════════════
@@ -110,38 +49,38 @@ let lastMotionTs = 0;
 // ═══════════════════════════════════════════════════════════════
 
 // ── Detección de pasos ─────────────────────────────────────────
-const STEP_HIGH   = 10.8;  // m/s² — umbral pico del paso
-const STEP_LOW    = 9.0;   // m/s² — umbral valle del paso
+const STEP_HIGH = 10.8;  // m/s² — umbral pico del paso
+const STEP_LOW = 9.0;   // m/s² — umbral valle del paso
 const STEP_GAP_MS = 210;   // ms mínimos entre pasos (~4.7 pasos/s máx)
-let smoothMag     = 9.81;  // magnitud suavizada (arranca en g)
-let peakSeen      = false;
-let lastStepMs    = 0;
+let smoothMag = 9.81;  // magnitud suavizada (arranca en g)
+let peakSeen = false;
+let lastStepMs = 0;
 
 // ── Velocidad y fricción diferenciada ─────────────────────────
-const WALK_SPEED    = 1.8;   // m/s objetivo al caminar (velocidad natural)
+const WALK_SPEED = 1.8;   // m/s objetivo al caminar (velocidad natural)
 const FRICTION_WALK = 0.8;   // fricción MIENTRAS camina (muy baja → fluido)
 const FRICTION_STOP = 5.0;   // fricción AL PARAR (decae en ~0.5s)
 const WALK_EXPIRE_MS = 450;  // ms que se mantiene el estado "caminando" tras un paso
-let walkingExpireMs  = 0;
+let walkingExpireMs = 0;
 
 // ── Desplazamiento del portal ──────────────────────────────────
 let portalOffset = 0;    // metros que el portal se ha acercado (+ = cerca)
 let walkVelocity = 0;    // m/s sobre el eje del portal
-const MAX_DIST   = 8.0;
+const MAX_DIST = 8.0;
 
 // ── Exploración dentro del portal ─────────────────────────────
-const innerPos      = new THREE.Vector3();
+const innerPos = new THREE.Vector3();
 const innerVelocity = new THREE.Vector3();
-const MAX_INNER     = 3.5;
+const MAX_INNER = 3.5;
 
 // ── Vectores de trabajo (pre-alojados, evitan GC en el loop) ──
-const _camFwd   = new THREE.Vector3();
+const _camFwd = new THREE.Vector3();
 
 // ── Raycaster + touch ─────────────────────────────────────────
 const DRAG_THRESHOLD = 12;
 
 // ── Eje y origen del portal ───────────────────────────────────
-const portalOrigin  = new THREE.Vector3();
+const portalOrigin = new THREE.Vector3();
 const portalAxisDir = new THREE.Vector3();
 
 // ═══════════════════════════════════════════════════════════════
@@ -165,7 +104,7 @@ async function launch() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: 'environment' },
-        width:  { ideal: 640 },
+        width: { ideal: 640 },
         height: { ideal: 480 }
       },
       audio: false
@@ -186,12 +125,12 @@ async function launch() {
 
   initThree();
   window.addEventListener('deviceorientation', onOrientation, true);
-  window.addEventListener('devicemotion',      onMotion,      true);
+  window.addEventListener('devicemotion', onMotion, true);
   setupTouch();
 
   splashLoading.classList.remove('on');
   splash.style.display = 'none';
-  hud.style.display    = 'block';
+  hud.style.display = 'block';
   btnPlace.style.display = 'block';
 
   showHud('Cargando portal McCORMICK...');
@@ -273,7 +212,7 @@ function setupTouch() {
       const paprika = portalGroup.userData.getPaprika();
       if (paprika) {
         scene.updateMatrixWorld(true);
-        const nx = (tapStartX / window.innerWidth)  * 2 - 1;
+        const nx = (tapStartX / window.innerWidth) * 2 - 1;
         const ny = -(tapStartY / window.innerHeight) * 2 + 1;
         const rc = new THREE.Raycaster();
         rc.setFromCamera(new THREE.Vector2(nx, ny), camera);
@@ -296,11 +235,8 @@ function onOrientation(e) {
   if (e.alpha === null) return;
   gyroReady = true;
 
-  // Madgwick tiene prioridad; este evento es solo el fallback
-  if (madgwickReady) return;
-
   _euler.set(
-    THREE.MathUtils.degToRad(e.beta  ?? 0),
+    THREE.MathUtils.degToRad(e.beta ?? 0),
     THREE.MathUtils.degToRad(e.alpha ?? 0),
     THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
     'YXZ'
@@ -317,15 +253,10 @@ function onOrientation(e) {
 
 // ═══════════════════════════════════════════════════════════════
 // DeviceMotion:
-//   PARTE 1 — Madgwick con rotationRate + accelerationIncludingGravity → orientación
-//   PARTE 2 — Detección de pasos con accelerationIncludingGravity → locomoción
-//
-// accelerationIncludingGravity es SIEMPRE disponible (100% iOS y Android).
-// event.acceleration (sin gravedad) falla en ~60% de dispositivos → NO se usa.
+//   Se encarga ÚNICAMENTE de la locomoción mediante acelerómetro (pico-valle).
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
   const now = performance.now();
-  const dt  = lastMotionTs > 0 ? Math.min((now - lastMotionTs) / 1000, 0.05) : 1 / 60;
   lastMotionTs = now;
 
   const accG = event.accelerationIncludingGravity;
@@ -335,38 +266,12 @@ function onMotion(event) {
   const ay = accG.y ?? 0;
   const az = accG.z ?? 0;
 
-  // ── PARTE 1: Madgwick — actualizar orientación ─────────────
-  const gyro = event.rotationRate;
-  if (gyro && gyro.alpha !== null) {
-    madgwickReady = true;
-    gyroReady     = true;
-
-    // DeviceMotion reporta rotationRate en grados/s.
-    // X (Pitch) = beta, Y (Roll) = gamma, Z (Yaw) = alpha
-    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0); // Eje X
-    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Eje Y
-    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Eje Z
-
-    madgwick.update(gx, gy, gz, ax, ay, az, dt);
-    madgwick.toThreeQuat(deviceQuat);
-
-    // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
-    deviceQuat.multiply(_corrQ);
-    // Corrección de rotación de pantalla (portrait/landscape)
-    _screenQ.setFromAxisAngle(
-      _zAxis,
-      -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
-    );
-    deviceQuat.multiply(_screenQ);
-    camera.quaternion.copy(deviceQuat);
-  }
-
-  // ── PARTE 2: Detección de pasos — solo cuando el portal está puesto ──
+  // ── Detección de pasos — solo cuando el portal está puesto ──
   if (!portalPlaced) return;
 
   // Magnitud del vector de aceleración (incluye gravedad ~9.81 en reposo)
   // Al caminar oscila entre ~7 y ~13 m/s². El algoritmo pico-valle detecta esto.
-  const rawMag = Math.sqrt(ax*ax + ay*ay + az*az);
+  const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
 
   // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
@@ -465,9 +370,9 @@ function placePortal() {
   portalGroup.lookAt(0, -1.3, 0);
 
   scene.add(portalGroup);
-  portalPlaced  = true;
-  portalOffset  = 0;
-  walkVelocity  = 0;
+  portalPlaced = true;
+  portalOffset = 0;
+  walkVelocity = 0;
   walkingExpireMs = 0;
 
   btnPlace.style.display = 'none';
@@ -487,14 +392,14 @@ function renderLoop(ts) {
   if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset, deviceQuat);
 
   if (portalPlaced) {
-    const now        = performance.now();
-    const isWalking  = now < walkingExpireMs;
+    const now = performance.now();
+    const isWalking = now < walkingExpireMs;
 
     // Fricción diferenciada (frame-rate independent):
     //   Mientras camina: FRICTION_WALK=0.8 → casi no frena entre pasos (fluido)
     //   Al parar:        FRICTION_STOP=5.0 → para en ~0.5s (natural)
-    const friction    = isWalking ? FRICTION_WALK : FRICTION_STOP;
-    const dampFactor  = Math.max(0, 1 - friction * dt);
+    const friction = isWalking ? FRICTION_WALK : FRICTION_STOP;
+    const dampFactor = Math.max(0, 1 - friction * dt);
 
     if (insidePortal) {
       // ── Exploración dentro del portal ────────────────────────
@@ -604,7 +509,7 @@ function onExitPortal() {
 // Helpers UI
 // ═══════════════════════════════════════════════════════════════
 function showStatus(msg) { if (statusEl) statusEl.textContent = msg; }
-function showHud(msg)    { hud.textContent = msg; }
+function showHud(msg) { hud.textContent = msg; }
 function showError(msg) {
   splashLoading.classList.add('on');
   showStatus('');
