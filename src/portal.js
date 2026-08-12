@@ -112,23 +112,30 @@ export async function buildPortalGroup(loader) {
     const progress = THREE.MathUtils.clamp(offset / 3.0, 0.0, 1.0);
     interior.position.z = -15.0 + (13.0 * progress);
 
-    // 2. Parallax X/Y: cuando el usuario gira la cabeza, la esfera se desplaza
-    //    ligeramente en sentido opuesto, creando la ilusión de profundidad y presencia.
-    //    Es el mismo efecto que usa 8th Wall en sus portales WebAR.
+    // 2. Parallax X/Y (Efecto Ventana 3D):
+    //    Convertimos la vista de la cámara al espacio local del portal.
+    //    Al mover el celular, desplazamos el interior drásticamente para frotar la falta de 6DOF,
+    //    creando la ilusión óptica de que estás asomándote a un mundo inmenso.
     if (camQuat) {
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
-      // Magnitud del parallax: mayor lejos del portal, casi cero al entrar
-      const parallaxStrength = (1.0 - progress) * 2.5;
-      // Lerp para suavizar el movimiento (evitar saltos bruscos)
+      // Vector hacia dónde está mirando el celular en el mundo
+      const worldFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
+      
+      // Convertir ese vector al espacio 3D del portal (para que funcione sin importar dónde lo pusiste)
+      const localFwd = group.worldToLocal(worldFwd.clone().add(group.position)).normalize();
+
+      // Magnitud masiva del parallax cuando estás afuera (se apaga gradualmente al entrar)
+      const parallaxStrength = (1.0 - progress) * 12.0;
+
+      // El fondo se mueve en la misma dirección que miras, engañando al cerebro (parallax)
       interior.position.x = THREE.MathUtils.lerp(
         interior.position.x,
-        -fwd.x * parallaxStrength,
-        0.12
+        localFwd.x * parallaxStrength,
+        0.15
       );
       interior.position.y = THREE.MathUtils.lerp(
         interior.position.y,
-        -fwd.y * parallaxStrength * 0.6,
-        0.12
+        localFwd.y * parallaxStrength * 0.7, // Un poco menos en Y para no marear
+        0.15
       );
     }
   };

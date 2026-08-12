@@ -12,7 +12,6 @@ const errorMsg      = document.getElementById('error-msg');
 const hud           = document.getElementById('hud');
 const btnPlace      = document.getElementById('btn-place');
 const cameraBg      = document.getElementById('camera-bg');
-const btnReset      = document.getElementById('btn-reset');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
@@ -200,7 +199,6 @@ async function launch() {
   showHud('Pulsa el botón para colocar el portal frente a ti');
 
   btnPlace.addEventListener('click', placePortal, { once: true });
-  if (btnReset) btnReset.addEventListener('click', resetPosition);
   renderer.setAnimationLoop(renderLoop);
 }
 
@@ -451,8 +449,8 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Portal a 3m enfrente, bajado 1.3m para centrar verticalmente en la pantalla
-  portalOrigin.set(fwd.x * 3.0, -1.3, fwd.z * 3.0);
+  // Portal a 3.5m enfrente, bajado 1.3m para centrar verticalmente en la pantalla
+  portalOrigin.set(fwd.x * 3.5, -1.3, fwd.z * 3.5);
   portalAxisDir.copy(fwd);
 
   portalGroup.position.copy(portalOrigin);
@@ -466,19 +464,6 @@ function placePortal() {
 
   btnPlace.style.display = 'none';
   showHud('Camina hacia el portal para entrar');
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Reset de posición (solo dentro del portal)
-// ═══════════════════════════════════════════════════════════════
-function resetPosition() {
-  innerPos.set(0, 0, 0);
-  innerVelocity.set(0, 0, 0);
-  camera.position.set(0, 0, 0);
-  showHud('Posición reiniciada ↺');
-  setTimeout(() => {
-    if (insidePortal) showHud('Toca el producto para verlo en la tienda');
-  }, 1500);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -565,8 +550,8 @@ function applyPortalOffset() {
 // Detección de cruce del portal
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // El portal se colocó a 3.0m → cruce cuando el offset supera 3.1m
-  const threshold = 3.1;
+  // El portal se colocó a 3.5m → cruce cuando el offset supera 3.6m
+  const threshold = 3.6;
   const nowInside = portalOffset >= threshold;
 
   if (nowInside && !insidePortal) {
@@ -592,11 +577,6 @@ function onEnterPortal() {
   cameraBg.style.transition = 'opacity 0.8s ease';
   cameraBg.style.opacity = '0';
   showHud('¡Bienvenido al mundo McCORMICK!');
-
-  if (btnReset) {
-    btnReset.style.display = 'block';
-    setTimeout(() => { if (btnReset) btnReset.style.opacity = '1'; }, 100);
-  }
 }
 
 function onExitPortal() {
@@ -604,11 +584,6 @@ function onExitPortal() {
   cameraBg.style.transition = 'opacity 0.5s ease';
   cameraBg.style.opacity = '1';
   showHud('Camina hacia el portal para entrar');
-
-  if (btnReset) {
-    btnReset.style.opacity = '0';
-    setTimeout(() => { if (btnReset) btnReset.style.display = 'none'; }, 300);
-  }
 
   // Resetear posición interna al salir
   innerPos.set(0, 0, 0);
