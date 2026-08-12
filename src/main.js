@@ -32,6 +32,9 @@ const _euler = new THREE.Euler();
 const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const _screenQ = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
+// ── Auto-calibración de Gravedad y Filtro Dinámico
+let baseGravity = 9.81;
+let gravitySamples = 0;
 let lastMotionTs = 0;
 
 // ═══════════════════════════════════════════════════════════════
@@ -266,6 +269,12 @@ function onMotion(event) {
 
   const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
   
+  // Calibrar la gravedad base del teléfono estando quieto
+  if (gravitySamples < 60) {
+    baseGravity = (baseGravity * gravitySamples + rawMag) / (gravitySamples + 1);
+    gravitySamples++;
+  }
+
   // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
 
@@ -365,9 +374,24 @@ function renderLoop(ts) {
   lastTs = ts;
 
   if (orientationReady) {
-    // Slerp continuo y fluido (15.0) para anular el temblor de los pasos (Jittering)
-    // El SO se encarga de que los grados nunca se descuadren.
-    currentQuat.slerp(targetQuat, Math.min(15.0 * dt, 1.0));
+    // ── FILTRO DINÁMICO DE INERCIA (Steadicam) ──
+    // Cuando el usuario camina, el impacto del paso (aceleración lineal)
+    // confunde la Fusión de Sensores del SO, causando saltos y temblores
+    // en el pitch/roll (la cámara tiembla).
+    // Solución: Detectar el pico de aceleración y "congelar/suavizar"
+    // temporalmente la rotación para ignorar la basura del sensor.
+    
+    const accError = Math.abs(smoothMag - baseGravity);
+    
+    // Si accError es muy bajo (< 0.5), el teléfono gira suavemente (responsivo = 18.0)
+    // Si accError es muy alto (> 2.5), es un paso, amortiguar al máximo (lento = 1.0)
+    let slerpFactor = 18.0;
+    if (accError > 0.5) {
+      const t = Math.min((accError - 0.5) / 2.0, 1.0);
+      slerpFactor = THREE.MathUtils.lerp(18.0, 1.5, t);
+    }
+
+    currentQuat.slerp(targetQuat, Math.min(slerpFactor * dt, 1.0));
     camera.quaternion.copy(currentQuat);
     deviceQuat.copy(currentQuat); // Usar rotación suave para la física de caminar
   } else {
