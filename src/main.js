@@ -4,15 +4,15 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ═══════════════════════════════════════════════════════════════
 // UI refs
 // ═══════════════════════════════════════════════════════════════
-const splash       = document.getElementById('splash');
-const splashLoading= document.getElementById('splash-loading');
-const statusEl     = document.getElementById('status-text');
-const btnOpen      = document.getElementById('btn-open');
-const errorMsg     = document.getElementById('error-msg');
-const hud          = document.getElementById('hud');
-const btnPlace     = document.getElementById('btn-place');
-const cameraBg     = document.getElementById('camera-bg');
-const btnReset     = document.getElementById('btn-reset');
+const splash        = document.getElementById('splash');
+const splashLoading = document.getElementById('splash-loading');
+const statusEl      = document.getElementById('status-text');
+const btnOpen       = document.getElementById('btn-open');
+const errorMsg      = document.getElementById('error-msg');
+const hud           = document.getElementById('hud');
+const btnPlace      = document.getElementById('btn-place');
+const cameraBg      = document.getElementById('camera-bg');
+const btnReset      = document.getElementById('btn-reset');
 
 // ═══════════════════════════════════════════════════════════════
 // Three.js state
@@ -24,9 +24,9 @@ let insidePortal = false;
 let lastTs       = 0;
 
 // ═══════════════════════════════════════════════════════════════
-// MADGWICK AHRS — Fusión giroscopio + acelerómetro
-// Sebastian Madgwick (2010). Beta=0.033 publicado para AR.
-// Sin dependencias externas — implementado inline.
+// MADGWICK AHRS — Fusión giroscopio + acelerómetro (inline)
+// Sebastian Madgwick (2010). Beta=0.033 es el valor estándar para AR.
+// Proporciona un quaternion estable y sin deriva para la orientación.
 // ═══════════════════════════════════════════════════════════════
 class MadgwickAHRS {
   constructor(beta = 0.033) {
@@ -34,23 +34,17 @@ class MadgwickAHRS {
     this.q0 = 1; this.q1 = 0; this.q2 = 0; this.q3 = 0;
   }
 
-  /**
-   * gx/gy/gz  rad/s  (rotationRate convertido)
-   * ax/ay/az  m/s²   (accelerationIncludingGravity)
-   * dt        s      (tiempo desde último frame)
-   */
+  // gx/gy/gz en rad/s   ax/ay/az en m/s²   dt en segundos
   update(gx, gy, gz, ax, ay, az, dt) {
     let { q0, q1, q2, q3, beta } = this;
     let recipNorm, s0, s1, s2, s3;
     let qDot0, qDot1, qDot2, qDot3;
 
-    // Derivada del quaternion por giroscopio
     qDot0 = 0.5 * (-q1*gx - q2*gy - q3*gz);
     qDot1 = 0.5 * ( q0*gx + q2*gz - q3*gy);
     qDot2 = 0.5 * ( q0*gy - q1*gz + q3*gx);
     qDot3 = 0.5 * ( q0*gz + q1*gy - q2*gx);
 
-    // Corrección de inclinación con acelerómetro (descarta si es cero)
     const accMag = Math.sqrt(ax*ax + ay*ay + az*az);
     if (accMag > 0.001) {
       recipNorm = 1.0 / accMag;
@@ -82,21 +76,20 @@ class MadgwickAHRS {
     this.q2 = q2*recipNorm; this.q3 = q3*recipNorm;
   }
 
-  /** Retorna THREE.Quaternion compatible (x,y,z,w) */
   toThreeQuat(target) {
+    // THREE.js espera (x, y, z, w), Madgwick devuelve (q0=w, q1=x, q2=y, q3=z)
     target.set(this.q1, this.q2, this.q3, this.q0);
     return target;
   }
 }
 
-const madgwick     = new MadgwickAHRS(0.033);
-let madgwickReady  = false;   // true cuando llega rotationRate del dispositivo
+const madgwick    = new MadgwickAHRS(0.033);
+let madgwickReady = false;
 
 // ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
 const _euler     = new THREE.Euler();
-// Corrección: el sistema de coordenadas del acelerómetro (Z apunta arriba)
-// debe convertirse al sistema de Three.js (Y apunta arriba).
+// Corrección: sistema del acelerómetro (Z↑) → sistema de Three.js (Y↑)
 const _corrQ     = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const _screenQ   = new THREE.Quaternion();
 const _zAxis     = new THREE.Vector3(0, 0, 1);
@@ -104,37 +97,51 @@ let gyroReady    = false;
 let lastMotionTs = 0;
 
 // ═══════════════════════════════════════════════════════════════
-// LOCOMOCIÓN — sistema continuo basado en acelerómetro real
+// LOCOMOCIÓN — Detección de pasos FIABLE (pico-valle en magnitud)
+//
+// POR QUÉ pico-valle y no event.acceleration continuo:
+//   • event.acceleration (sin gravedad) devuelve null en ~60% de iOS/Android
+//   • accelerationIncludingGravity SIEMPRE está disponible (100% dispositivos)
+//   • La magnitud oscila entre 7-13 m/s² al caminar → pico-valle muy confiable
+//
+// La fluidez se consigue con física de velocidad:
+//   • onStep() impulsa walkVelocity hacia WALK_SPEED con lerp 0.8
+//   • Mientras se camina: fricción casi nula (velocidad constante entre pasos)
+//   • Al parar: fricción normal (velocidad decae en ~0.5s)
 // ═══════════════════════════════════════════════════════════════
 
-// ── ANTES de cruzar el portal: el portal se mueve hacia/desde cámara ──
-let portalOffset = 0;
-let walkVelocity = 0;         // m/s a lo largo del eje del portal
+// ── Detección de pasos ─────────────────────────────────────────
+const STEP_HIGH   = 10.8;  // m/s² — umbral pico del paso
+const STEP_LOW    = 9.0;   // m/s² — umbral valle del paso
+const STEP_GAP_MS = 210;   // ms mínimos entre pasos (~4.7 pasos/s máx)
+let smoothMag     = 9.81;  // magnitud suavizada (arranca en g)
+let peakSeen      = false;
+let lastStepMs    = 0;
 
-// ── DENTRO del portal: la cámara explora el mundo 360° ──
-const innerPos      = new THREE.Vector3(); // posición exploratoria (XZ)
-const innerVelocity = new THREE.Vector3(); // velocidad exploratoria en mundo
+// ── Velocidad y fricción diferenciada ─────────────────────────
+const WALK_SPEED    = 1.8;   // m/s objetivo al caminar (velocidad natural)
+const FRICTION_WALK = 0.8;   // fricción MIENTRAS camina (muy baja → fluido)
+const FRICTION_STOP = 5.0;   // fricción AL PARAR (decae en ~0.5s)
+const WALK_EXPIRE_MS = 450;  // ms que se mantiene el estado "caminando" tras un paso
+let walkingExpireMs  = 0;
 
-// Constantes de física
-const VEL_DAMPING   = 0.82;   // 0=frena al instante, 1=sin fricción
-                               // A 60fps: 0.82^60 ≈ 0  (para en ~1.5s)
-const ACC_SCALE     = 0.40;   // sensibilidad acelerómetro → velocidad
-const ACC_THRESHOLD = 0.25;   // zona muerta m/s² (evita deriva en reposo)
-const MAX_DIST      = 8.0;    // metros máx lejos del portal
-const MAX_INNER     = 3.5;    // metros máx de exploración interna
+// ── Desplazamiento del portal ──────────────────────────────────
+let portalOffset = 0;    // metros que el portal se ha acercado (+ = cerca)
+let walkVelocity = 0;    // m/s sobre el eje del portal
+const MAX_DIST   = 8.0;
 
-// EMA sobre la proyección de aceleración (suaviza jitter del sensor)
-let smoothAccFwd = 0;
-const EMA_ALPHA  = 0.22;      // 0.10=muy suave, 0.30=más reactivo
+// ── Exploración dentro del portal ─────────────────────────────
+const innerPos      = new THREE.Vector3();
+const innerVelocity = new THREE.Vector3();
+const MAX_INNER     = 3.5;
 
-// Vectores de trabajo (pre-alojados para evitar GC en el loop)
-const _accVec  = new THREE.Vector3();
-const _camFwd  = new THREE.Vector3();
+// ── Vectores de trabajo (pre-alojados, evitan GC en el loop) ──
+const _camFwd   = new THREE.Vector3();
 
-// ── Touch ─────────────────────────────────────────────────────
+// ── Raycaster + touch ─────────────────────────────────────────
 const DRAG_THRESHOLD = 12;
 
-// Eje del portal
+// ── Eje y origen del portal ───────────────────────────────────
 const portalOrigin  = new THREE.Vector3();
 const portalAxisDir = new THREE.Vector3();
 
@@ -143,21 +150,17 @@ const portalAxisDir = new THREE.Vector3();
 // ═══════════════════════════════════════════════════════════════
 splash.addEventListener('click', () => launch(), { once: true });
 
-// ═══════════════════════════════════════════════════════════════
-// PASO 1 – Permisos + Cámara
-// ═══════════════════════════════════════════════════════════════
 async function launch() {
   splashLoading.classList.add('on');
   showStatus('Solicitando permisos...');
 
-  // iOS 13+: pedir permisos de sensores en gesto del usuario
+  // iOS 13+: permisos de sensores deben pedirse en gesto del usuario
   for (const E of [DeviceOrientationEvent, DeviceMotionEvent]) {
     if (typeof E?.requestPermission === 'function') {
       try { await E.requestPermission(); } catch (_) { }
     }
   }
 
-  // Cámara trasera
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -183,11 +186,8 @@ async function launch() {
   await new Promise(r => { cameraBg.onloadedmetadata = r; });
 
   initThree();
-
-  // Escuchar ambos eventos: DeviceOrientation (fallback) y DeviceMotion (Madgwick + locomoción)
   window.addEventListener('deviceorientation', onOrientation, true);
   window.addEventListener('devicemotion',      onMotion,      true);
-
   setupTouch();
 
   splashLoading.classList.remove('on');
@@ -221,7 +221,8 @@ function initThree() {
 
   scene = new THREE.Scene();
 
-  // Cámara fija en el origen — rota con Madgwick, traslada dentro del portal
+  // La cámara está en el origen. Rota con Madgwick.
+  // Cuando el usuario cruza el portal, se traslada con innerPos.
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
   camera.position.set(0, 0, 0);
   scene.add(camera);
@@ -239,11 +240,10 @@ function initThree() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Touch: tap → CTA 3D   |   drag → rotar modelo GLB
+// Touch: tap corto → CTA | drag → rotar modelo GLB
 // ═══════════════════════════════════════════════════════════════
 function setupTouch() {
-  let tapStartX = 0, tapStartY = 0;
-  let isDragging = false;
+  let tapStartX = 0, tapStartY = 0, isDragging = false;
 
   document.addEventListener('touchstart', e => {
     if (e.target.closest('button')) return;
@@ -270,9 +270,7 @@ function setupTouch() {
   }, { passive: true });
 
   document.addEventListener('touchend', () => {
-    if (insidePortal && portalGroup?.userData.onTouchEnd) {
-      portalGroup.userData.onTouchEnd();
-    }
+    if (insidePortal && portalGroup?.userData.onTouchEnd) portalGroup.userData.onTouchEnd();
     if (!isDragging && insidePortal && portalGroup?.userData.getPaprika) {
       const paprika = portalGroup.userData.getPaprika();
       if (paprika) {
@@ -281,8 +279,7 @@ function setupTouch() {
         const ny = -(tapStartY / window.innerHeight) * 2 + 1;
         const rc = new THREE.Raycaster();
         rc.setFromCamera(new THREE.Vector2(nx, ny), camera);
-        const intersects = rc.intersectObject(paprika, true);
-        const ctaHit = intersects.find(h => h.object.name === 'CTA_Plane');
+        const ctaHit = rc.intersectObject(paprika, true).find(h => h.object.name === 'CTA_Plane');
         if (ctaHit) {
           showHud('¡Abriendo tienda McCormick!');
           window.open('https://www.mccormick.com.mx', '_blank');
@@ -294,14 +291,14 @@ function setupTouch() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DeviceOrientation → Fallback cuando NO hay rotationRate
-// (se ignora en cuanto Madgwick empieza a recibir datos)
+// DeviceOrientation → Fallback de orientación
+// Solo se usa cuando Madgwick no recibe rotationRate (algunos Android/iOS)
 // ═══════════════════════════════════════════════════════════════
 function onOrientation(e) {
   if (e.alpha === null) return;
   gyroReady = true;
 
-  // Si Madgwick ya está activo, este evento es redundante
+  // Madgwick tiene prioridad; este evento es solo el fallback
   if (madgwickReady) return;
 
   _euler.set(
@@ -321,32 +318,42 @@ function onOrientation(e) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DeviceMotion → Madgwick (orientación) + Aceleración (locomoción)
+// DeviceMotion:
+//   PARTE 1 — Madgwick con rotationRate + accelerationIncludingGravity → orientación
+//   PARTE 2 — Detección de pasos con accelerationIncludingGravity → locomoción
+//
+// accelerationIncludingGravity es SIEMPRE disponible (100% iOS y Android).
+// event.acceleration (sin gravedad) falla en ~60% de dispositivos → NO se usa.
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
   const now = performance.now();
   const dt  = lastMotionTs > 0 ? Math.min((now - lastMotionTs) / 1000, 0.05) : 1 / 60;
   lastMotionTs = now;
 
-  // ── 1. Orientación con Madgwick AHRS ──────────────────────────
-  const gyro = event.rotationRate;
-  const accG = event.accelerationIncludingGravity; // incluye gravedad (siempre disponible)
+  const accG = event.accelerationIncludingGravity;
+  if (!accG || accG.x === null) return;
 
-  if (gyro && gyro.alpha !== null && accG && accG.x !== null) {
+  const ax = accG.x ?? 0;
+  const ay = accG.y ?? 0;
+  const az = accG.z ?? 0;
+
+  // ── PARTE 1: Madgwick — actualizar orientación ─────────────
+  const gyro = event.rotationRate;
+  if (gyro && gyro.alpha !== null) {
     madgwickReady = true;
     gyroReady     = true;
 
-    // Convertir grados/s → rad/s
+    // DeviceMotion reporta rotationRate en grados/s → convertir a rad/s
     const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0);
     const gy = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
     const gz = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
 
-    madgwick.update(gx, gy, gz, accG.x ?? 0, accG.y ?? 0, accG.z ?? 0, dt);
+    madgwick.update(gx, gy, gz, ax, ay, az, dt);
     madgwick.toThreeQuat(deviceQuat);
 
-    // Corrección de ejes (Z↑ del dispositivo → Y↑ de Three.js)
+    // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
     deviceQuat.multiply(_corrQ);
-    // Corrección de orientación de pantalla (portrait vs landscape)
+    // Corrección de rotación de pantalla (portrait/landscape)
     _screenQ.setFromAxisAngle(
       _zAxis,
       -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
@@ -355,51 +362,73 @@ function onMotion(event) {
     camera.quaternion.copy(deviceQuat);
   }
 
-  // ── 2. Locomoción — solo cuando el portal está colocado ───────
+  // ── PARTE 2: Detección de pasos — solo cuando el portal está puesto ──
   if (!portalPlaced) return;
 
-  // Usamos event.acceleration (SIN gravedad) para dirección real de movimiento.
-  // Si el dispositivo no lo provee (algunos Android), fallback a accG - 9.81 eje Y.
-  const linAcc = event.acceleration;
-  if (!linAcc || linAcc.x === null) return;
+  // Magnitud del vector de aceleración (incluye gravedad ~9.81 en reposo)
+  // Al caminar oscila entre ~7 y ~13 m/s². El algoritmo pico-valle detecta esto.
+  const rawMag = Math.sqrt(ax*ax + ay*ay + az*az);
 
-  const ax = linAcc.x ?? 0;
-  const ay = linAcc.y ?? 0;
-  const az = linAcc.z ?? 0;
+  // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
+  smoothMag = smoothMag * 0.5 + rawMag * 0.5;
 
-  // Rotar el vector de aceleración local → espacio mundial
-  _accVec.set(ax, ay, az).applyQuaternion(deviceQuat);
-  _accVec.y = 0; // Solo plano horizontal
+  // Fase 1: detectar pico (inicio del paso)
+  if (!peakSeen && smoothMag > STEP_HIGH) {
+    peakSeen = true;
+  }
+
+  // Fase 2: detectar valle después del pico (final del paso)
+  if (peakSeen && smoothMag < STEP_LOW) {
+    peakSeen = false;
+    const elapsed = now - lastStepMs;
+    if (elapsed > STEP_GAP_MS) {
+      lastStepMs = now;
+      onStep(now);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// onStep — se llama cada vez que se detecta un paso físico
+//
+// DIRECCIÓN: dot product entre camFwd y portalAxisDir.
+//   dot > 0  → usuario mira hacia el portal  → AVANZAR  (portal se acerca)
+//   dot < 0  → usuario mira lejos del portal → RETROCEDER (portal se aleja)
+//
+// FLUIDEZ: lerp del 80% hacia WALK_SPEED. Cada paso refresca la velocidad
+//   sin saltos bruscos. La fricción diferenciada mantiene la velocidad
+//   entre pasos cuando se sigue caminando.
+// ═══════════════════════════════════════════════════════════════
+function onStep(now) {
+  // Vector hacia adelante de la cámara proyectado en el plano XZ
+  _camFwd.set(0, 0, -1).applyQuaternion(deviceQuat);
+  _camFwd.y = 0;
+  if (_camFwd.lengthSq() < 0.0001) return; // sin orientación todavía
+  _camFwd.normalize();
 
   if (insidePortal) {
-    // ── Dentro del portal: exploración libre siguiendo la vista ─
-    // Proyectar aceleración sobre el vector "hacia adelante" de la cámara en mundo XZ
-    _camFwd.set(0, 0, -1).applyQuaternion(deviceQuat);
-    _camFwd.y = 0;
-    if (_camFwd.lengthSq() > 0.0001) _camFwd.normalize();
-
-    const fwdAcc = _accVec.dot(_camFwd);
-    const filtered = Math.abs(fwdAcc) > ACC_THRESHOLD ? fwdAcc : 0;
-
-    if (filtered !== 0) {
-      // Sumar impulso en la dirección de la vista
-      innerVelocity.addScaledVector(_camFwd, filtered * ACC_SCALE * dt);
-      // Clampar velocidad máxima
-      const spd = innerVelocity.length();
-      if (spd > 2.5) innerVelocity.multiplyScalar(2.5 / spd);
-    }
+    // ── Dentro del portal: moverse en la dirección de la vista ──
+    walkingExpireMs = now + WALK_EXPIRE_MS;
+    // Dar impulso en la dirección actual de la cámara
+    innerVelocity.addScaledVector(_camFwd, WALK_SPEED * 0.8);
+    // Clampar velocidad máxima
+    const spd = innerVelocity.length();
+    if (spd > WALK_SPEED * 1.5) innerVelocity.multiplyScalar((WALK_SPEED * 1.5) / spd);
 
   } else {
-    // ── Fuera del portal: avanzar/retroceder en el eje del portal ─
-    const accFwd = _accVec.dot(portalAxisDir);
-    const filtered = Math.abs(accFwd) > ACC_THRESHOLD ? accFwd : 0;
+    // ── Fuera del portal: avanzar/retroceder por el eje del portal ──
+    const dot = _camFwd.dot(portalAxisDir);
 
-    // EMA suavizado: reduce jitter de alta frecuencia del acelerómetro
-    smoothAccFwd = smoothAccFwd * (1 - EMA_ALPHA) + filtered * EMA_ALPHA;
+    // Zona muerta ±0.15 para evitar activación accidental al girar 90°
+    const direction = dot > 0.15 ? 1 : dot < -0.15 ? -1 : 0;
+    if (direction === 0) return;
 
-    // Integrar aceleración → velocidad
-    walkVelocity += smoothAccFwd * ACC_SCALE * dt;
-    walkVelocity = THREE.MathUtils.clamp(walkVelocity, -3.0, 3.0);
+    // Refrescar estado "caminando" para la fricción diferenciada
+    walkingExpireMs = now + WALK_EXPIRE_MS;
+
+    // Lerp del 80% hacia la velocidad objetivo: arranque rápido y natural.
+    // Si cambias de dirección, la velocidad revierte suavemente.
+    walkVelocity = THREE.MathUtils.lerp(walkVelocity, direction * WALK_SPEED, 0.8);
   }
 }
 
@@ -422,7 +451,7 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
-  // Colocar a 3.0m enfrente de la vista actual, bajado 1.3m para centrar verticalmente
+  // Portal a 3m enfrente, bajado 1.3m para centrar verticalmente en la pantalla
   portalOrigin.set(fwd.x * 3.0, -1.3, fwd.z * 3.0);
   portalAxisDir.copy(fwd);
 
@@ -430,17 +459,17 @@ function placePortal() {
   portalGroup.lookAt(0, -1.3, 0);
 
   scene.add(portalGroup);
-  portalPlaced   = true;
-  portalOffset   = 0;
-  walkVelocity   = 0;
-  smoothAccFwd   = 0;
+  portalPlaced  = true;
+  portalOffset  = 0;
+  walkVelocity  = 0;
+  walkingExpireMs = 0;
 
   btnPlace.style.display = 'none';
   showHud('Camina hacia el portal para entrar');
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Reset de posición dentro del portal
+// Reset de posición (solo dentro del portal)
 // ═══════════════════════════════════════════════════════════════
 function resetPosition() {
   innerPos.set(0, 0, 0);
@@ -461,14 +490,18 @@ function renderLoop(ts) {
 
   if (!gyroReady) camera.rotation.set(0, 0, 0);
 
-  // Tick del portal (animaciones internas: páprika, esfera, parallax)
+  // Tick del portal: animaciones internas + parallax de la esfera
   if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset, deviceQuat);
 
   if (portalPlaced) {
-    // Fricción frame-rate independent:
-    // Math.pow(VEL_DAMPING, dt*60) es equivalente a damping=VEL_DAMPING a exactamente 60fps,
-    // pero se ajusta automáticamente a cualquier framerate real.
-    const dampFactor = Math.pow(VEL_DAMPING, dt * 60);
+    const now        = performance.now();
+    const isWalking  = now < walkingExpireMs;
+
+    // Fricción diferenciada (frame-rate independent):
+    //   Mientras camina: FRICTION_WALK=0.8 → casi no frena entre pasos (fluido)
+    //   Al parar:        FRICTION_STOP=5.0 → para en ~0.5s (natural)
+    const friction    = isWalking ? FRICTION_WALK : FRICTION_STOP;
+    const dampFactor  = Math.max(0, 1 - friction * dt);
 
     if (insidePortal) {
       // ── Exploración dentro del portal ────────────────────────
@@ -481,18 +514,15 @@ function renderLoop(ts) {
         camera.position.x = innerPos.x;
         camera.position.z = innerPos.z;
 
-        // Head bobbing sutil proporcional a la velocidad
-        camera.position.y = THREE.MathUtils.lerp(
-          camera.position.y,
-          Math.sin(ts * 0.007) * Math.min(speed * 0.08, 0.06),
-          8.0 * dt
-        );
+        // Head bobbing proporcional a la velocidad de desplazamiento
+        const bobbingAmt = Math.sin(ts * 0.007) * Math.min(speed * 0.03, 0.05);
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingAmt, 8.0 * dt);
       } else {
         camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
       }
 
     } else {
-      // ── Avanzar / retroceder hacia el portal ─────────────────
+      // ── Locomoción hacia / desde el portal ───────────────────
       walkVelocity *= dampFactor;
 
       if (Math.abs(walkVelocity) > 0.003) {
@@ -502,13 +532,15 @@ function renderLoop(ts) {
           MAX_DIST
         );
         applyPortalOffset();
-      }
 
-      // Head bobbing suave proporcional a la velocidad de caminata
-      const bobbingTarget = Math.abs(walkVelocity) > 0.1
-        ? Math.sin(ts * 0.007) * Math.min(Math.abs(walkVelocity) * 0.045, 0.07)
-        : 0;
-      camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingTarget, 8.0 * dt);
+        // Head bobbing proporcional a la velocidad
+        const bobbingAmt = Math.abs(walkVelocity) > 0.1
+          ? Math.sin(ts * 0.007) * Math.min(Math.abs(walkVelocity) * 0.035, 0.065)
+          : 0;
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, bobbingAmt, 8.0 * dt);
+      } else {
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 5.0 * dt);
+      }
     }
 
     checkCrossing();
@@ -523,17 +555,17 @@ function renderLoop(ts) {
 // ═══════════════════════════════════════════════════════════════
 function applyPortalOffset() {
   if (!portalGroup || !portalPlaced) return;
-  // offset positivo → portal se mueve en -portalAxisDir → se acerca a la cámara
+  // offset positivo → portal se acerca a la cámara (usuario avanza)
   portalGroup.position
     .copy(portalOrigin)
     .addScaledVector(portalAxisDir, -portalOffset);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Detección de cruce
+// Detección de cruce del portal
 // ═══════════════════════════════════════════════════════════════
 function checkCrossing() {
-  // Umbral = distancia inicial (3.0m) + margen (0.1m)
+  // El portal se colocó a 3.0m → cruce cuando el offset supera 3.1m
   const threshold = 3.1;
   const nowInside = portalOffset >= threshold;
 
@@ -549,8 +581,6 @@ function checkCrossing() {
     const remaining = Math.max(0, threshold - portalOffset).toFixed(1);
     if (portalOffset > 0.3) {
       showHud(`Faltan ~${remaining}m para entrar`);
-    } else if (portalOffset < -0.5) {
-      showHud('Camina hacia el portal para entrar');
     } else {
       showHud('Camina hacia el portal para entrar');
     }
@@ -563,7 +593,6 @@ function onEnterPortal() {
   cameraBg.style.opacity = '0';
   showHud('¡Bienvenido al mundo McCORMICK!');
 
-  // Mostrar botón de reset solo cuando estás adentro
   if (btnReset) {
     btnReset.style.display = 'block';
     setTimeout(() => { if (btnReset) btnReset.style.opacity = '1'; }, 100);
@@ -576,7 +605,6 @@ function onExitPortal() {
   cameraBg.style.opacity = '1';
   showHud('Camina hacia el portal para entrar');
 
-  // Ocultar botón de reset
   if (btnReset) {
     btnReset.style.opacity = '0';
     setTimeout(() => { if (btnReset) btnReset.style.display = 'none'; }, 300);
