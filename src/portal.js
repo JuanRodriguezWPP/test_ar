@@ -443,10 +443,10 @@ async function loadPaprika(loader) {
     // Añadir el CTA 3D nativo justo arriba de la Páprika
     const cta = create3D_CTA();
     cta.position.set(0, 1.4, 0); // Arriba del producto (centro en X)
-    
+
     // Totalmente recto frente al usuario
     cta.rotation.y = 0;
-    
+
     wrapper.add(cta);
 
     return wrapper;
