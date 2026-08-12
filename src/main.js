@@ -155,8 +155,9 @@ async function launch() {
   showStatus('Solicitando permisos...');
 
   // iOS 13+: permisos de sensores deben pedirse en gesto del usuario
-  for (const E of [DeviceOrientationEvent, DeviceMotionEvent]) {
-    if (typeof E?.requestPermission === 'function') {
+  const sensorEvents = [window.DeviceOrientationEvent, window.DeviceMotionEvent];
+  for (const E of sensorEvents) {
+    if (E && typeof E.requestPermission === 'function') {
       try { await E.requestPermission(); } catch (_) { }
     }
   }
