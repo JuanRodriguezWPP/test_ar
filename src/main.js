@@ -82,8 +82,11 @@ class MadgwickAHRS {
   }
 }
 
-const madgwick = new MadgwickAHRS(0.033);
+// Beta alto al inicio → converge instantáneamente al horizonte correcto en <0.3 s
+// Luego baja al valor de "suavizado fino" estándar para AR estable.
+const madgwick = new MadgwickAHRS(2.0);
 let madgwickReady = false;
+let madgwickFrames = 0; // contador de frames para bajar beta después de la convergencia
 
 // ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
@@ -198,6 +201,8 @@ async function launch() {
   await loadPortal();
   showHud('Pulsa el botón para colocar el portal frente a ti');
 
+  // Asignar el listener solo DESPUéS de que el portal ya cargó.
+  // Si el usuario lo presionó antes, el click se ignora correctamente.
   btnPlace.addEventListener('click', placePortal, { once: true });
   renderer.setAnimationLoop(renderLoop);
 }
@@ -339,12 +344,24 @@ function onMotion(event) {
   const gyro = event.rotationRate;
   if (gyro && gyro.alpha !== null) {
     madgwickReady = true;
-    gyroReady = true;
+    gyroReady     = true;
 
-    // DeviceMotion reporta rotationRate en grados/s → convertir a rad/s
-    const gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);
-    const gy = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
-    const gz = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
+    // MAPEO CORRECTO de ejes (W3C DeviceMotion Spec):
+    //   rotationRate.beta  = velocidad angular en eje X (Pitch: inclinar arriba/abajo)
+    //   rotationRate.gamma = velocidad angular en eje Y (Roll: inclinar izquierda/derecha)
+    //   rotationRate.alpha = velocidad angular en eje Z (Yaw: girar izquierda/derecha)
+    // Los ejes en rad/s que recibe Madgwick deben corresponder al sistema XYZ del sensor.
+    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0); // X (Pitch)
+    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y (Roll)
+    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z (Yaw)
+
+    // Bajar Beta progresivamente: arranque rápido (~0.5s de convergencia)
+    // después se fija en 0.033 para máxima suavidad y estabilidad en AR
+    if (madgwickFrames < 30) {
+      madgwickFrames++;
+    } else {
+      madgwick.beta = 0.033;
+    }
 
     madgwick.update(gx, gy, gz, ax, ay, az, dt);
     madgwick.toThreeQuat(deviceQuat);
@@ -437,6 +454,11 @@ async function loadPortal() {
   const loader = new GLTFLoader();
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
+
+  // Pre-compilar shaders: evita el tirón/congelamiento al instanciar el portal en escena
+  scene.add(portalGroup);
+  renderer.compile(scene, camera);
+  scene.remove(portalGroup);
 }
 
 // ═══════════════════════════════════════════════════════════════

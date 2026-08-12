@@ -42,6 +42,10 @@ export async function buildPortalGroup(loader) {
   let rotInertia = 0;         // velocidad angular de inercia post-gesto
   let isUserDragging = false; // ¿usuario arrastrando en este momento?
 
+  // ── Vectores pre-alojados para tick() (evitan GC a 60fps) ────
+  const _worldFwd = new THREE.Vector3();
+  const _localFwdTarget = new THREE.Vector3();
+
   // ── API pública ────────────────────────────────────────────────
   group.userData.setStencil = (enabled) => {
     applyStencil(interior, enabled);
@@ -114,14 +118,14 @@ export async function buildPortalGroup(loader) {
 
     // 2. Parallax X/Y (Efecto Ventana 3D):
     //    Convertimos la vista de la cámara al espacio local del portal.
-    //    Al mover el celular, desplazamos el interior drásticamente para frotar la falta de 6DOF,
-    //    creando la ilusión óptica de que estás asomándote a un mundo inmenso.
+    //    Al mover el celular, desplazamos el interior drásticamente para crear
+    //    la ilusión óptica de que estás asomándote a un mundo inmenso.
     if (camQuat) {
-      // Vector hacia dónde está mirando el celular en el mundo
-      const worldFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
-
-      // Convertir ese vector al espacio 3D del portal (para que funcione sin importar dónde lo pusiste)
-      const localFwd = group.worldToLocal(worldFwd.clone().add(group.position)).normalize();
+      // Reutilizamos vectores pre-alojados (evita GC a 60 fps)
+      _worldFwd.set(0, 0, -1).applyQuaternion(camQuat);
+      _localFwdTarget.copy(_worldFwd).add(group.position);
+      group.worldToLocal(_localFwdTarget);
+      _localFwdTarget.normalize();
 
       // Magnitud masiva del parallax cuando estás afuera (se apaga gradualmente al entrar)
       const parallaxStrength = (1.0 - progress) * 12.0;
@@ -129,12 +133,12 @@ export async function buildPortalGroup(loader) {
       // El fondo se mueve en la misma dirección que miras, engañando al cerebro (parallax)
       interior.position.x = THREE.MathUtils.lerp(
         interior.position.x,
-        localFwd.x * parallaxStrength,
+        _localFwdTarget.x * parallaxStrength,
         0.15
       );
       interior.position.y = THREE.MathUtils.lerp(
         interior.position.y,
-        localFwd.y * parallaxStrength * 0.7, // Un poco menos en Y para no marear
+        _localFwdTarget.y * parallaxStrength * 0.7,
         0.15
       );
     }
