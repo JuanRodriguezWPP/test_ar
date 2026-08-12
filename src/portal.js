@@ -82,36 +82,57 @@ export async function buildPortalGroup(loader) {
   };
 
   // ── Tick de animación ───────────────────────────────────────────
-  group.userData.tick = (ts, offset = 0) => {
+  // camQuat: THREE.Quaternion de la cámara (para parallax de la esfera)
+  group.userData.tick = (ts, offset = 0, camQuat = null) => {
     if (paprikaMesh?.children[0]) {
       const model = paprikaMesh.children[0];
 
-      // Flotación vertical (siempre activa)
+      // Flotación vertical suave (siempre activa)
       if (model.userData.baseY !== undefined) {
         model.position.y = model.userData.baseY + Math.sin(ts * 0.0015) * 0.15;
       }
 
       // Rotación del modelo: tres fases
       if (isUserDragging) {
-        // Fase 1 — Control directo: ya se aplica en onTouchDrag() en tiempo real
+        // Fase 1 — Control directo: se aplica en onTouchDrag() en tiempo real
       } else if (Math.abs(rotInertia) > 0.0002) {
-        // Fase 2 — Inercia post-gesto: decay exponencial 92% por frame (~60fps)
+        // Fase 2 — Inercia post-gesto: decay exponencial 92% por frame
         rotInertia *= 0.92;
-        modelRotY += rotInertia;
+        modelRotY  += rotInertia;
         model.rotation.y = modelRotY;
       } else {
-        // Fase 3 — Auto-rotación suave (cuando no hay interacción)
+        // Fase 3 — Auto-rotación suave (sin interacción)
         model.rotation.y += 0.006;
-        modelRotY = model.rotation.y; // mantener sincronizado
+        modelRotY = model.rotation.y;
       }
     }
 
-    // Parallax dinámico de la esfera 360°
-    // offset 0 → esfera a -15m (mucha profundidad)
-    // offset ≥3 → esfera a -2m (usuario dentro del portal)
-    const progress = Math.min(Math.max(offset / 3.0, 0.0), 1.0);
+    // ── Parallax de la esfera 360° ──────────────────────────────
+    // 1. Profundidad Z: offset 0 → -15m (lejos), offset ≥3 → -2m (dentro)
+    const progress = THREE.MathUtils.clamp(offset / 3.0, 0.0, 1.0);
     interior.position.z = -15.0 + (13.0 * progress);
+
+    // 2. Parallax X/Y: cuando el usuario gira la cabeza, la esfera se desplaza
+    //    ligeramente en sentido opuesto, creando la ilusión de profundidad y presencia.
+    //    Es el mismo efecto que usa 8th Wall en sus portales WebAR.
+    if (camQuat) {
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
+      // Magnitud del parallax: mayor lejos del portal, casi cero al entrar
+      const parallaxStrength = (1.0 - progress) * 2.5;
+      // Lerp para suavizar el movimiento (evitar saltos bruscos)
+      interior.position.x = THREE.MathUtils.lerp(
+        interior.position.x,
+        -fwd.x * parallaxStrength,
+        0.12
+      );
+      interior.position.y = THREE.MathUtils.lerp(
+        interior.position.y,
+        -fwd.y * parallaxStrength * 0.6,
+        0.12
+      );
+    }
   };
+
 
   return group;
 }
