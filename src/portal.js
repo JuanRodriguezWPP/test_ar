@@ -98,7 +98,7 @@ export async function buildPortalGroup(loader) {
       } else if (Math.abs(rotInertia) > 0.0002) {
         // Fase 2 — Inercia post-gesto: decay exponencial 92% por frame
         rotInertia *= 0.92;
-        modelRotY  += rotInertia;
+        modelRotY += rotInertia;
         model.rotation.y = modelRotY;
       } else {
         // Fase 3 — Auto-rotación suave (sin interacción)
@@ -119,7 +119,7 @@ export async function buildPortalGroup(loader) {
     if (camQuat) {
       // Vector hacia dónde está mirando el celular en el mundo
       const worldFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
-      
+
       // Convertir ese vector al espacio 3D del portal (para que funcione sin importar dónde lo pusiste)
       const localFwd = group.worldToLocal(worldFwd.clone().add(group.position)).normalize();
 

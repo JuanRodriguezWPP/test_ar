@@ -20,13 +20,73 @@ let renderer, scene, camera;
 let portalGroup = null;
 let portalPlaced = false;
 let insidePortal = false;
-// ═══════════════════════════════════════════════════════════════
-// Orientación de la cámara (Fusión Nativa + SLERP)
-// ═══════════════════════════════════════════════════════════════
-const targetQuat = new THREE.Quaternion();
-const deviceQuat = new THREE.Quaternion(); // Quaternion suavizado
-let orientationInitialized = false;
+let lastTs = 0;
 
+// ═══════════════════════════════════════════════════════════════
+// MADGWICK AHRS — Fusión giroscopio + acelerómetro (inline)
+// Sebastian Madgwick (2010). Beta=0.033 es el valor estándar para AR.
+// Proporciona un quaternion estable y sin deriva para la orientación.
+// ═══════════════════════════════════════════════════════════════
+class MadgwickAHRS {
+  constructor(beta = 0.033) {
+    this.beta = beta;
+    this.q0 = 1; this.q1 = 0; this.q2 = 0; this.q3 = 0;
+  }
+
+  // gx/gy/gz en rad/s   ax/ay/az en m/s²   dt en segundos
+  update(gx, gy, gz, ax, ay, az, dt) {
+    let { q0, q1, q2, q3, beta } = this;
+    let recipNorm, s0, s1, s2, s3;
+    let qDot0, qDot1, qDot2, qDot3;
+
+    qDot0 = 0.5 * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot1 = 0.5 * (q0 * gx + q2 * gz - q3 * gy);
+    qDot2 = 0.5 * (q0 * gy - q1 * gz + q3 * gx);
+    qDot3 = 0.5 * (q0 * gz + q1 * gy - q2 * gx);
+
+    const accMag = Math.sqrt(ax * ax + ay * ay + az * az);
+    if (accMag > 0.001) {
+      recipNorm = 1.0 / accMag;
+      ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
+
+      const _2q0 = 2 * q0, _2q1 = 2 * q1, _2q2 = 2 * q2, _2q3 = 2 * q3;
+      const _4q0 = 4 * q0, _4q1 = 4 * q1, _4q2 = 4 * q2;
+      const _8q1 = 8 * q1, _8q2 = 8 * q2;
+      const q0q0 = q0 * q0, q1q1 = q1 * q1, q2q2 = q2 * q2, q3q3 = q3 * q3;
+
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + 4 * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+      s2 = 4 * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+      s3 = 4 * q1q1 * q3 - _2q1 * ax + 4 * q2q2 * q3 - _2q2 * ay;
+
+      recipNorm = 1.0 / Math.sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
+      if (isFinite(recipNorm)) {
+        s0 *= recipNorm; s1 *= recipNorm; s2 *= recipNorm; s3 *= recipNorm;
+        qDot0 -= beta * s0; qDot1 -= beta * s1;
+        qDot2 -= beta * s2; qDot3 -= beta * s3;
+      }
+    }
+
+    q0 += qDot0 * dt; q1 += qDot1 * dt;
+    q2 += qDot2 * dt; q3 += qDot3 * dt;
+
+    recipNorm = 1.0 / Math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    this.q0 = q0 * recipNorm; this.q1 = q1 * recipNorm;
+    this.q2 = q2 * recipNorm; this.q3 = q3 * recipNorm;
+  }
+
+  toThreeQuat(target) {
+    // THREE.js espera (x, y, z, w), Madgwick devuelve (q0=w, q1=x, q2=y, q3=z)
+    target.set(this.q1, this.q2, this.q3, this.q0);
+    return target;
+  }
+}
+
+const madgwick = new MadgwickAHRS(0.033);
+let madgwickReady = false;
+
+// ── Orientación de la cámara ──────────────────────────────────
+const deviceQuat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 // Corrección: sistema del acelerómetro (Z↑) → sistema de Three.js (Y↑)
 const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
@@ -231,9 +291,13 @@ function setupTouch() {
 // ═══════════════════════════════════════════════════════════════
 // DeviceOrientation → Fallback de orientación
 // Solo se usa cuando Madgwick no recibe rotationRate (algunos Android/iOS)
+// ═══════════════════════════════════════════════════════════════
 function onOrientation(e) {
   if (e.alpha === null) return;
   gyroReady = true;
+
+  // Madgwick tiene prioridad; este evento es solo el fallback
+  if (madgwickReady) return;
 
   _euler.set(
     THREE.MathUtils.degToRad(e.beta ?? 0),
@@ -241,52 +305,77 @@ function onOrientation(e) {
     THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
     'YXZ'
   );
-  targetQuat.setFromEuler(_euler);
-  targetQuat.multiply(_corrQ);
+  deviceQuat.setFromEuler(_euler);
+  deviceQuat.multiply(_corrQ);
   _screenQ.setFromAxisAngle(
     _zAxis,
     -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
   );
-  targetQuat.multiply(_screenQ);
-
-  if (!orientationInitialized) {
-    deviceQuat.copy(targetQuat);
-    orientationInitialized = true;
-  }
+  deviceQuat.multiply(_screenQ);
+  camera.quaternion.copy(deviceQuat);
 }
 
 // ═══════════════════════════════════════════════════════════════
 // DeviceMotion:
+//   PARTE 1 — Madgwick con rotationRate + accelerationIncludingGravity → orientación
+//   PARTE 2 — Detección de pasos con accelerationIncludingGravity → locomoción
+//
+// accelerationIncludingGravity es SIEMPRE disponible (100% iOS y Android).
+// event.acceleration (sin gravedad) falla en ~60% de dispositivos → NO se usa.
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
   const now = performance.now();
+  const dt = lastMotionTs > 0 ? Math.min((now - lastMotionTs) / 1000, 0.05) : 1 / 60;
+  lastMotionTs = now;
+
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  let ax = accG.x ?? 0;
-  let ay = accG.y ?? 0;
-  let az = accG.z ?? 0;
+  const ax = accG.x ?? 0;
+  const ay = accG.y ?? 0;
+  const az = accG.z ?? 0;
 
-  const isIOS = [
-    'iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'
-  ].includes(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+  // ── PARTE 1: Madgwick — actualizar orientación ─────────────
+  const gyro = event.rotationRate;
+  if (gyro && gyro.alpha !== null) {
+    madgwickReady = true;
+    gyroReady = true;
 
-  if (isIOS) {
-    ax = -ax;
-    ay = -ay;
-    az = -az;
+    // DeviceMotion reporta rotationRate en grados/s → convertir a rad/s
+    const gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);
+    const gy = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
+    const gz = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
+
+    madgwick.update(gx, gy, gz, ax, ay, az, dt);
+    madgwick.toThreeQuat(deviceQuat);
+
+    // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
+    deviceQuat.multiply(_corrQ);
+    // Corrección de rotación de pantalla (portrait/landscape)
+    _screenQ.setFromAxisAngle(
+      _zAxis,
+      -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
+    );
+    deviceQuat.multiply(_screenQ);
+    camera.quaternion.copy(deviceQuat);
   }
 
-  // ── Detección de pasos — solo cuando el portal está puesto ──
+  // ── PARTE 2: Detección de pasos — solo cuando el portal está puesto ──
   if (!portalPlaced) return;
 
+  // Magnitud del vector de aceleración (incluye gravedad ~9.81 en reposo)
+  // Al caminar oscila entre ~7 y ~13 m/s². El algoritmo pico-valle detecta esto.
   const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
+
+  // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
 
+  // Fase 1: detectar pico (inicio del paso)
   if (!peakSeen && smoothMag > STEP_HIGH) {
     peakSeen = true;
   }
 
+  // Fase 2: detectar valle después del pico (final del paso)
   if (peakSeen && smoothMag < STEP_LOW) {
     peakSeen = false;
     const elapsed = now - lastStepMs;
@@ -298,24 +387,45 @@ function onMotion(event) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// onStep — se llama cada vez que se detecta un paso físico
+//
+// DIRECCIÓN: dot product entre camFwd y portalAxisDir.
+//   dot > 0  → usuario mira hacia el portal  → AVANZAR  (portal se acerca)
+//   dot < 0  → usuario mira lejos del portal → RETROCEDER (portal se aleja)
+//
+// FLUIDEZ: lerp del 80% hacia WALK_SPEED. Cada paso refresca la velocidad
+//   sin saltos bruscos. La fricción diferenciada mantiene la velocidad
+//   entre pasos cuando se sigue caminando.
+// ═══════════════════════════════════════════════════════════════
 function onStep(now) {
+  // Vector hacia adelante de la cámara proyectado en el plano XZ
   _camFwd.set(0, 0, -1).applyQuaternion(deviceQuat);
   _camFwd.y = 0;
-  if (_camFwd.lengthSq() < 0.0001) return;
+  if (_camFwd.lengthSq() < 0.0001) return; // sin orientación todavía
   _camFwd.normalize();
 
   if (insidePortal) {
+    // ── Dentro del portal: moverse en la dirección de la vista ──
     walkingExpireMs = now + WALK_EXPIRE_MS;
+    // Dar impulso en la dirección actual de la cámara
     innerVelocity.addScaledVector(_camFwd, WALK_SPEED * 0.8);
+    // Clampar velocidad máxima
     const spd = innerVelocity.length();
     if (spd > WALK_SPEED * 1.5) innerVelocity.multiplyScalar((WALK_SPEED * 1.5) / spd);
 
   } else {
+    // ── Fuera del portal: avanzar/retroceder por el eje del portal ──
     const dot = _camFwd.dot(portalAxisDir);
+
+    // Zona muerta ±0.15 para evitar activación accidental al girar 90°
     const direction = dot > 0.15 ? 1 : dot < -0.15 ? -1 : 0;
     if (direction === 0) return;
 
+    // Refrescar estado "caminando" para la fricción diferenciada
     walkingExpireMs = now + WALK_EXPIRE_MS;
+
+    // Lerp del 80% hacia la velocidad objetivo: arranque rápido y natural.
+    // Si cambias de dirección, la velocidad revierte suavemente.
     walkVelocity = THREE.MathUtils.lerp(walkVelocity, direction * WALK_SPEED, 0.8);
   }
 }
@@ -327,11 +437,6 @@ async function loadPortal() {
   const loader = new GLTFLoader();
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
-
-  // Pre-compilar shaders en la memoria caché del GPU:
-  scene.add(portalGroup);
-  renderer.compile(scene, camera);
-  scene.remove(portalGroup);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -344,6 +449,7 @@ function placePortal() {
   fwd.y = 0;
   fwd.normalize();
 
+  // Portal a 3.5m enfrente, bajado 1.3m para centrar verticalmente en la pantalla
   portalOrigin.set(fwd.x * 3.5, -1.3, fwd.z * 3.5);
   portalAxisDir.copy(fwd);
 
@@ -363,20 +469,14 @@ function placePortal() {
 // ═══════════════════════════════════════════════════════════════
 // Render loop
 // ═══════════════════════════════════════════════════════════════
-function renderLoop(time) {
-  const dt = lastTs > 0 ? (time - lastTs) / 1000 : 0;
-  lastTs = time;
-
-  // Filtro SLERP (Amortiguador esférico)
-  if (orientationInitialized) {
-    deviceQuat.slerp(targetQuat, Math.min(12.0 * (dt || 0.016), 1.0));
-    camera.quaternion.copy(deviceQuat);
-  }
+function renderLoop(ts) {
+  const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.05) : 0.016;
+  lastTs = ts;
 
   if (!gyroReady) camera.rotation.set(0, 0, 0);
 
   // Tick del portal: animaciones internas + parallax de la esfera
-  if (portalGroup?.userData.tick) portalGroup.userData.tick(time, portalOffset, deviceQuat);
+  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalOffset, deviceQuat);
 
   if (portalPlaced) {
     const now = performance.now();
