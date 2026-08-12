@@ -19,23 +19,87 @@ const cameraBg = document.getElementById('camera-bg');
 let renderer, scene, camera;
 let portalGroup = null;
 let portalPlaced = false;
-let insidePortal = false;
-let lastTs = 0;
+// ═══════════════════════════════════════════════════════════════
+// MADGWICK AHRS — Fusión giroscopio + acelerómetro (inline)
+// Sebastian Madgwick (2010). Beta=0.033 es el valor estándar para AR.
+// Proporciona un quaternion estable y sin deriva para la orientación.
+// ═══════════════════════════════════════════════════════════════
+class MadgwickAHRS {
+  constructor(beta = 0.033) {
+    this.beta = beta;
+    this.q0 = 1; this.q1 = 0; this.q2 = 0; this.q3 = 0;
+  }
 
-// ── Orientación de la cámara (OS Sensor Fusion) ───────────────
-const targetQuat = new THREE.Quaternion();
-const currentQuat = new THREE.Quaternion();
-let orientationReady = false;
+  // gx/gy/gz en rad/s   ax/ay/az en m/s²   dt en segundos
+  update(gx, gy, gz, ax, ay, az, dt) {
+    let { q0, q1, q2, q3, beta } = this;
+    let recipNorm, s0, s1, s2, s3;
+    let qDot0, qDot1, qDot2, qDot3;
+
+    qDot0 = 0.5 * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot1 = 0.5 * (q0 * gx + q2 * gz - q3 * gy);
+    qDot2 = 0.5 * (q0 * gy - q1 * gz + q3 * gx);
+    qDot3 = 0.5 * (q0 * gz + q1 * gy - q2 * gx);
+
+    const accMag = Math.sqrt(ax * ax + ay * ay + az * az);
+    if (accMag > 0.001) {
+      recipNorm = 1.0 / accMag;
+      ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
+
+      const _2q0 = 2 * q0, _2q1 = 2 * q1, _2q2 = 2 * q2, _2q3 = 2 * q3;
+      const _4q0 = 4 * q0, _4q1 = 4 * q1, _4q2 = 4 * q2;
+      const _8q1 = 8 * q1, _8q2 = 8 * q2;
+      const q0q0 = q0 * q0, q1q1 = q1 * q1, q2q2 = q2 * q2, q3q3 = q3 * q3;
+
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + 4 * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+      s2 = 4 * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+      s3 = 4 * q1q1 * q3 - _2q1 * ax + 4 * q2q2 * q3 - _2q2 * ay;
+
+      recipNorm = 1.0 / Math.sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
+      if (isFinite(recipNorm)) {
+        s0 *= recipNorm; s1 *= recipNorm; s2 *= recipNorm; s3 *= recipNorm;
+        qDot0 -= beta * s0; qDot1 -= beta * s1;
+        qDot2 -= beta * s2; qDot3 -= beta * s3;
+      }
+    }
+
+    q0 += qDot0 * dt; q1 += qDot1 * dt;
+    q2 += qDot2 * dt; q3 += qDot3 * dt;
+
+    recipNorm = 1.0 / Math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    this.q0 = q0 * recipNorm; this.q1 = q1 * recipNorm;
+    this.q2 = q2 * recipNorm; this.q3 = q3 * recipNorm;
+  }
+
+  toThreeQuat(target) {
+    target.set(this.q1, this.q2, this.q3, this.q0);
+    return target;
+  }
+}
+
+// Beta alto al inicio para converger al horizonte rápido
+const madgwick = new MadgwickAHRS(1.5);
+let madgwickFrames = 0;
+let madgwickReady = false;
+
+// ── Orientación de la cámara ───────────────
 const deviceQuat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 // Corrección: sistema del acelerómetro (Z↑) → sistema de Three.js (Y↑)
 const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const _screenQ = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
-// ── Auto-calibración de Gravedad y Filtro Dinámico
-let baseGravity = 9.81;
-let gravitySamples = 0;
 let lastMotionTs = 0;
+let invertGravity = false;
+let gravityCalibrated = false;
+
+// ── Auto-calibración de Bias del Giroscopio (Fix para Androids baratos)
+let gyroBiasX = 0;
+let gyroBiasY = 0;
+let gyroBiasZ = 0;
+let gyroBiasSamples = 0;
+let gyroCalibrated = false;
 
 // ═══════════════════════════════════════════════════════════════
 // LOCOMOCIÓN — Detección de pasos FIABLE (pico-valle en magnitud)
@@ -225,27 +289,7 @@ function setupTouch() {
   }, { passive: true });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Orientación del dispositivo (Calibrada por el Sistema Operativo)
-// ═══════════════════════════════════════════════════════════════
-function onOrientation(e) {
-  if (e.alpha === null) return;
-  orientationReady = true;
 
-  _euler.set(
-    THREE.MathUtils.degToRad(e.beta ?? 0),
-    THREE.MathUtils.degToRad(e.alpha ?? 0),
-    THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
-    'YXZ'
-  );
-  targetQuat.setFromEuler(_euler);
-  targetQuat.multiply(_corrQ);
-  _screenQ.setFromAxisAngle(
-    _zAxis,
-    -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
-  );
-  targetQuat.multiply(_screenQ);
-}
 
 // ═══════════════════════════════════════════════════════════════
 // DeviceMotion:
@@ -263,19 +307,71 @@ function onMotion(event) {
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  const ax = accG.x ?? 0;
-  const ay = accG.y ?? 0;
-  const az = accG.z ?? 0;
+  let ax = accG.x ?? 0;
+  let ay = accG.y ?? 0;
+  let az = accG.z ?? 0;
 
   const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
   
-  // Calibrar la gravedad base del teléfono estando quieto
-  if (gravitySamples < 60) {
-    baseGravity = (baseGravity * gravitySamples + rawMag) / (gravitySamples + 1);
-    gravitySamples++;
+  // ── 1. Calibración de Gravedad Invertida ──
+  if (!gravityCalibrated && rawMag > 8.5 && rawMag < 11.0) {
+    if (ay < -3.0) invertGravity = true;
+    const isIOS = ['iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'].includes(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+    if (isIOS) invertGravity = true;
+    gravityCalibrated = true;
   }
 
-  // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
+  if (invertGravity) {
+    ax = -ax; ay = -ay; az = -az;
+  }
+
+  // ── 2. Actualizar Madgwick ──
+  const gyro = event.rotationRate;
+  if (gyro && gyro.alpha !== null) {
+    let gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);  // X = Pitch
+    let gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y = Roll
+    let gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z = Yaw
+
+    // Auto-calibrar Bias (Deriva) del giroscopio cuando el dispositivo está quieto
+    if (!gyroCalibrated && rawMag > 9.0 && rawMag < 10.5) {
+      gyroBiasX += gx;
+      gyroBiasY += gy;
+      gyroBiasZ += gz;
+      gyroBiasSamples++;
+      
+      if (gyroBiasSamples >= 45) { // 45 frames de quietud son suficientes
+        gyroBiasX /= 45;
+        gyroBiasY /= 45;
+        gyroBiasZ /= 45;
+        gyroCalibrated = true;
+      }
+    }
+
+    if (gyroCalibrated) {
+      gx -= gyroBiasX;
+      gy -= gyroBiasY;
+      gz -= gyroBiasZ;
+      
+      madgwickReady = true;
+
+      if (madgwickFrames < 30) {
+        madgwickFrames++;
+      } else if (madgwick.beta > 0.034) {
+        madgwick.beta = 0.033; // Bajar ganancia para suavidad absoluta
+      }
+
+      madgwick.update(gx, gy, gz, ax, ay, az, dt);
+      madgwick.toThreeQuat(deviceQuat);
+
+      // Alinear el frame de Madgwick al de Three.js
+      deviceQuat.multiply(_corrQ);
+      _screenQ.setFromAxisAngle(_zAxis, -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0));
+      deviceQuat.multiply(_screenQ);
+      camera.quaternion.copy(deviceQuat);
+    }
+  }
+
+  // EMA ligero para detección de pasos
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
 
   // Fase 1: detectar pico (inicio del paso)
@@ -373,30 +469,7 @@ function renderLoop(ts) {
   const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.05) : 0.016;
   lastTs = ts;
 
-  if (orientationReady) {
-    // ── FILTRO DINÁMICO DE INERCIA (Steadicam) ──
-    // Cuando el usuario camina, el impacto del paso (aceleración lineal)
-    // confunde la Fusión de Sensores del SO, causando saltos y temblores
-    // en el pitch/roll (la cámara tiembla).
-    // Solución: Detectar el pico de aceleración y "congelar/suavizar"
-    // temporalmente la rotación para ignorar la basura del sensor.
-    
-    const accError = Math.abs(smoothMag - baseGravity);
-    
-    // Si accError es muy bajo (< 0.5), el teléfono gira suavemente (responsivo = 18.0)
-    // Si accError es muy alto (> 2.5), es un paso, amortiguar al máximo (lento = 1.0)
-    let slerpFactor = 18.0;
-    if (accError > 0.5) {
-      const t = Math.min((accError - 0.5) / 2.0, 1.0);
-      slerpFactor = THREE.MathUtils.lerp(18.0, 1.5, t);
-    }
-
-    currentQuat.slerp(targetQuat, Math.min(slerpFactor * dt, 1.0));
-    camera.quaternion.copy(currentQuat);
-    deviceQuat.copy(currentQuat); // Usar rotación suave para la física de caminar
-  } else {
-    camera.rotation.set(0, 0, 0);
-  }
+  if (!madgwickReady) camera.rotation.set(0, 0, 0);
 
   // Tick del portal (animaciones y parallax)
   const toUser = virtualPos.clone().sub(portalOrigin);
