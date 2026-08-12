@@ -82,8 +82,9 @@ class MadgwickAHRS {
   }
 }
 
-const madgwick = new MadgwickAHRS(0.033);
+const madgwick    = new MadgwickAHRS(1.5); // Inicia altísimo para alinearse instantáneamente (0.1 seg)
 let madgwickReady = false;
+let madgwickFrames = 0;
 
 // ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
@@ -331,20 +332,37 @@ function onMotion(event) {
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  const ax = accG.x ?? 0;
-  const ay = accG.y ?? 0;
-  const az = accG.z ?? 0;
+  let ax = accG.x ?? 0;
+  let ay = accG.y ?? 0;
+  let az = accG.z ?? 0;
+
+  // Detección de iOS para arreglar su inversión de hardware de la gravedad
+  const isIOS = [
+    'iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'
+  ].includes(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+
+  if (isIOS) {
+    ax = -ax; ay = -ay; az = -az;
+  }
 
   // ── PARTE 1: Madgwick — actualizar orientación ─────────────
   const gyro = event.rotationRate;
   if (gyro && gyro.alpha !== null) {
     madgwickReady = true;
-    gyroReady = true;
+    gyroReady     = true;
 
-    // DeviceMotion reporta rotationRate en grados/s → convertir a rad/s
-    const gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);
-    const gy = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
-    const gz = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
+    // Reducir Beta a modo "Suave/Filtrado" después de ~0.5 segundos
+    if (madgwickFrames < 30) {
+      madgwickFrames++;
+    } else if (madgwick.beta > 0.034) {
+      madgwick.beta = 0.033;
+    }
+
+    // Mapeo CORRECTO de ejes (Pitch=X, Roll=Y, Yaw=Z)
+    // Si están cruzados, Madgwick choca con el acelerómetro causando temblores al caminar.
+    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0); // X
+    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y
+    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z
 
     madgwick.update(gx, gy, gz, ax, ay, az, dt);
     madgwick.toThreeQuat(deviceQuat);
@@ -437,6 +455,12 @@ async function loadPortal() {
   const loader = new GLTFLoader();
   const { buildPortalGroup } = await import('./portal.js');
   portalGroup = await buildPortalGroup(loader);
+
+  // Pre-compilar shaders en la GPU:
+  // EVITA el tirón/tartamudeo cuando caminas o pones el portal
+  scene.add(portalGroup);
+  renderer.compile(scene, camera);
+  scene.remove(portalGroup);
 }
 
 // ═══════════════════════════════════════════════════════════════
