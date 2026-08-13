@@ -23,89 +23,31 @@ let insidePortal = false;
 let lastTs = 0;
 
 // ═══════════════════════════════════════════════════════════════
-// MADGWICK AHRS — Fusión giroscopio + acelerómetro (inline)
-// Sebastian Madgwick (2010). Beta=0.033 es el valor estándar para AR.
-// Proporciona un quaternion estable y sin deriva para la orientación.
+// Orientación de la cámara — DeviceOrientationEvent
+//
+// POR QUÉ DeviceOrientationEvent y NO Madgwick + sensores raw:
+//   • DeviceOrientationEvent (alpha/beta/gamma) es normalizado por el
+//     navegador Chrome/Safari INTERNAMENTE para cada fabricante Android.
+//   • DeviceMotionEvent.rotationRate NO está normalizado: cada fabricante
+//     (Samsung, Xiaomi, Motorola, Pixel, OnePlus...) mapea los ejes del
+//     giroscopio de forma diferente a nivel de hardware.
+//   • El filtro Madgwick consumía estos datos raw, lo que funcionaba en
+//     el Redmi de desarrollo pero producía quaternions con ejes
+//     invertidos/rotados en cualquier otro dispositivo.
+//   • El navegador ya aplica fusión de sensores (Kalman/Complementary)
+//     internamente, por lo que no necesitamos un filtro adicional.
+//
+// Esta es la misma técnica que usaba THREE.DeviceOrientationControls,
+// probada en millones de dispositivos durante años.
 // ═══════════════════════════════════════════════════════════════
-class MadgwickAHRS {
-  constructor(beta = 0.033) {
-    this.beta = beta;
-    this.q0 = 1; this.q1 = 0; this.q2 = 0; this.q3 = 0;
-  }
-
-  // gx/gy/gz en rad/s   ax/ay/az en m/s²   dt en segundos
-  update(gx, gy, gz, ax, ay, az, dt) {
-    let { q0, q1, q2, q3, beta } = this;
-    let recipNorm, s0, s1, s2, s3;
-    let qDot0, qDot1, qDot2, qDot3;
-
-    qDot0 = 0.5 * (-q1 * gx - q2 * gy - q3 * gz);
-    qDot1 = 0.5 * (q0 * gx + q2 * gz - q3 * gy);
-    qDot2 = 0.5 * (q0 * gy - q1 * gz + q3 * gx);
-    qDot3 = 0.5 * (q0 * gz + q1 * gy - q2 * gx);
-
-    const accMag = Math.sqrt(ax * ax + ay * ay + az * az);
-    if (accMag > 0.001) {
-      recipNorm = 1.0 / accMag;
-      ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
-
-      const _2q0 = 2 * q0, _2q1 = 2 * q1, _2q2 = 2 * q2, _2q3 = 2 * q3;
-      const _4q0 = 4 * q0, _4q1 = 4 * q1, _4q2 = 4 * q2;
-      const _8q1 = 8 * q1, _8q2 = 8 * q2;
-      const q0q0 = q0 * q0, q1q1 = q1 * q1, q2q2 = q2 * q2, q3q3 = q3 * q3;
-
-      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
-      s1 = _4q1 * q3q3 - _2q3 * ax + 4 * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
-      s2 = 4 * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
-      s3 = 4 * q1q1 * q3 - _2q1 * ax + 4 * q2q2 * q3 - _2q2 * ay;
-
-      recipNorm = 1.0 / Math.sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
-      if (isFinite(recipNorm)) {
-        s0 *= recipNorm; s1 *= recipNorm; s2 *= recipNorm; s3 *= recipNorm;
-        qDot0 -= beta * s0; qDot1 -= beta * s1;
-        qDot2 -= beta * s2; qDot3 -= beta * s3;
-      }
-    }
-
-    q0 += qDot0 * dt; q1 += qDot1 * dt;
-    q2 += qDot2 * dt; q3 += qDot3 * dt;
-
-    recipNorm = 1.0 / Math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-    this.q0 = q0 * recipNorm; this.q1 = q1 * recipNorm;
-    this.q2 = q2 * recipNorm; this.q3 = q3 * recipNorm;
-  }
-
-  toThreeQuat(target) {
-    // THREE.js espera (x, y, z, w), Madgwick devuelve (q0=w, q1=x, q2=y, q3=z)
-    target.set(this.q1, this.q2, this.q3, this.q0);
-    return target;
-  }
-}
-
-const madgwick = new MadgwickAHRS(0.033);
-let madgwickReady = false;
-
-// ── Orientación de la cámara ──────────────────────────────────
 const deviceQuat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
-// Corrección: sistema del acelerómetro (Z↑) → sistema de Three.js (Y↑)
+// Corrección: sistema del dispositivo (Z↑) → sistema de Three.js (Y↑)
+// Rotación de -90° alrededor del eje X.
 const _corrQ = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const _screenQ = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 let gyroReady = false;
-let lastMotionTs = 0;
-
-// ── Detección robusta de gravedad invertida (iOS vs Android) ──
-// iOS Safari invierte el signo de accelerationIncludingGravity respecto al W3C.
-// En vez de adivinar con una sola muestra, promediamos 30 frames y usamos
-// detección de plataforma como respaldo.
-let invertGravity = false;
-let gravityCalibrated = false;
-let gravCalSamples = 0;
-let gravCalAccumY = 0;
-const GRAV_CAL_FRAMES = 30;
-const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-               (navigator.userAgent.includes('Mac') && 'ontouchend' in document);
 
 // ═══════════════════════════════════════════════════════════════
 // LOCOMOCIÓN — Detección de pasos FIABLE (pico-valle en magnitud)
@@ -232,8 +174,8 @@ function initThree() {
 
   scene = new THREE.Scene();
 
-  // La cámara está en el origen. Rota con Madgwick.
-  // Cuando el usuario cruza el portal, se traslada con innerPos.
+  // La cámara está en el origen. Rota con DeviceOrientationEvent.
+  // Cuando el usuario cruza el portal, se traslada con virtualPos.
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
   camera.position.set(0, 0, 0);
   scene.add(camera);
@@ -302,141 +244,65 @@ function setupTouch() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DeviceOrientation → Fallback de orientación
-// Solo se usa cuando Madgwick no ha recibido rotationRate todavía.
-// Una vez Madgwick se activa, este handler queda permanentemente inactivo
-// (BUG 4 FIX: eliminar ping-pong entre fuentes de orientación).
+// DeviceOrientation — FUENTE PRIMARIA Y ÚNICA de orientación
+//
+// El navegador Chrome/Safari normaliza internamente alpha/beta/gamma
+// para cada fabricante Android (Samsung, Xiaomi, Motorola, Pixel, etc.).
+// Esto garantiza compatibilidad universal sin depender de datos raw
+// de rotationRate que varían entre dispositivos.
+//
+// Conversión estándar: Euler(beta, alpha, -gamma, 'YXZ') + corrección Z↑→Y↑
+// (misma técnica de THREE.DeviceOrientationControls, probada en millones
+// de dispositivos).
 // ═══════════════════════════════════════════════════════════════
 function onOrientation(e) {
   if (e.alpha === null) return;
   gyroReady = true;
 
-  // BUG 4 FIX: Una vez que Madgwick se activa, NUNCA volver al fallback.
-  // Esto evita saltos de orientación por mezclar dos fuentes distintas.
-  if (madgwickReady) return;
-
+  // Conversión estándar W3C → Three.js quaternion:
+  //   Euler X = beta  (pitch: inclinación adelante/atrás)
+  //   Euler Y = alpha (yaw: giro horizontal / brújula)
+  //   Euler Z = -gamma (roll: ladeo izquierda/derecha, negado por convención)
+  //   Orden: 'YXZ' (estándar para cámaras AR/VR)
   _euler.set(
-    THREE.MathUtils.degToRad(e.beta ?? 0),
+    THREE.MathUtils.degToRad(e.beta  ?? 0),
     THREE.MathUtils.degToRad(e.alpha ?? 0),
     THREE.MathUtils.degToRad(-(e.gamma ?? 0)),
     'YXZ'
   );
   deviceQuat.setFromEuler(_euler);
+
+  // Corrección de sistema de coordenadas: Z↑ (sensor) → Y↑ (Three.js)
   deviceQuat.multiply(_corrQ);
 
-  // BUG 5: Usar API moderna con fallback robusto
+  // Corrección de rotación de pantalla (portrait/landscape)
   const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
   _screenQ.setFromAxisAngle(_zAxis, -THREE.MathUtils.degToRad(screenAngle));
   deviceQuat.multiply(_screenQ);
+
   camera.quaternion.copy(deviceQuat);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DeviceMotion:
-//   PARTE 1 — Madgwick con rotationRate + accelerationIncludingGravity → orientación
-//   PARTE 2 — Detección de pasos con accelerationIncludingGravity → locomoción
+// DeviceMotion — SOLO detección de pasos (locomoción)
 //
-// accelerationIncludingGravity es SIEMPRE disponible (100% iOS y Android).
-// event.acceleration (sin gravedad) falla en ~60% de dispositivos → NO se usa.
-//
-// FIXES APLICADOS:
-//   BUG 2: const→let para ax/ay/az, calibración de gravedad multi-muestra
-//   BUG 3: Eliminada calibración manual de bias (Madgwick β lo absorbe)
-//   BUG 4: Madgwick se activa inmediatamente (sin esperar 45 frames)
-//   BUG 8: NaN guard en quaternion de salida
+// accelerationIncludingGravity SIEMPRE está disponible (100% iOS y Android).
+// La magnitud (invariante al signo) se usa para detección pico-valle.
+// NO se usa para orientación (eso lo hace DeviceOrientationEvent).
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
   const now = performance.now();
-  const dt = lastMotionTs > 0 ? Math.min((now - lastMotionTs) / 1000, 0.05) : 1 / 60;
-  lastMotionTs = now;
 
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  // BUG 2a FIX: usar let en vez de const para poder invertir la gravedad
-  let ax = accG.x ?? 0;
-  let ay = accG.y ?? 0;
-  let az = accG.z ?? 0;
-
-  // ── PARTE 1: Madgwick — actualizar orientación ─────────────
-  const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
-
-  // ── BUG 2b FIX: Calibración robusta de gravedad invertida ──
-  // Promediamos GRAV_CAL_FRAMES muestras de ay para determinar el signo de gravedad.
-  // iOS Safari invierte accelerationIncludingGravity respecto al estándar W3C.
-  // Algunos Android raros también lo hacen. Detectamos ambos casos.
-  if (!gravityCalibrated) {
-    // iOS se detecta por UA — siempre invierte
-    if (_isIOS) {
-      invertGravity = true;
-      gravityCalibrated = true;
-    } else if (rawMag > 8.0 && rawMag < 12.0) {
-      // En Android, promediamos ay durante 30 frames estables.
-      // En portrait normal con W3C: ay ≈ +9.81 (positivo).
-      // Si el promedio es negativo, el fabricante invierte los ejes.
-      gravCalAccumY += ay;
-      gravCalSamples++;
-      if (gravCalSamples >= GRAV_CAL_FRAMES) {
-        const avgY = gravCalAccumY / GRAV_CAL_FRAMES;
-        // Solo invertir si ay es claramente negativo (< -5 m/s²)
-        // Un umbral alto evita falsos positivos por inclinación del usuario
-        if (avgY < -5.0) invertGravity = true;
-        gravityCalibrated = true;
-      }
-    }
-  }
-
-  if (invertGravity) {
-    ax = -ax; ay = -ay; az = -az;
-  }
-
-  // ── Madgwick: fusión giroscopio + acelerómetro ─────────────
-  const gyro = event.rotationRate;
-  if (gyro && gyro.alpha !== null) {
-    // Mapeo W3C → body frame del Madgwick:
-    //   beta  = rotación en X (pitch)   → gx
-    //   gamma = rotación en Y (roll)    → gy
-    //   alpha = rotación en Z (yaw)     → gz
-    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0);
-    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
-    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
-
-    // BUG 3 FIX: Activar Madgwick inmediatamente.
-    // No necesitamos calibrar bias manualmente: el término β del Madgwick
-    // (0.033) ya compensa la deriva del giroscopio de forma continua.
-    // La calibración manual de 45 frames era peligrosa porque:
-    //   1) Acumulaba rotación real del usuario como "bias"
-    //   2) Podía bloquear Madgwick indefinidamente si el usuario se movía
-    //   3) Causaba doble compensación encima de lo que β ya hace
-    if (!madgwickReady) {
-      madgwickReady = true;
-      gyroReady = true;
-    }
-
-    madgwick.update(gx, gy, gz, ax, ay, az, dt);
-    madgwick.toThreeQuat(deviceQuat);
-
-    // BUG 8 FIX: NaN guard — si el quaternion tiene NaN, resetear Madgwick
-    if (!isFinite(deviceQuat.x) || !isFinite(deviceQuat.y) ||
-        !isFinite(deviceQuat.z) || !isFinite(deviceQuat.w)) {
-      madgwick.q0 = 1; madgwick.q1 = 0; madgwick.q2 = 0; madgwick.q3 = 0;
-      deviceQuat.set(0, 0, 0, 1);
-      return;
-    }
-
-    // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
-    deviceQuat.multiply(_corrQ);
-
-    // BUG 5 FIX: Corrección de rotación de pantalla con API moderna
-    const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
-    _screenQ.setFromAxisAngle(_zAxis, -THREE.MathUtils.degToRad(screenAngle));
-    deviceQuat.multiply(_screenQ);
-
-    camera.quaternion.copy(deviceQuat);
-  }
-
-  // ── PARTE 2: Detección de pasos — solo cuando el portal está puesto ──
+  // Solo detección de pasos — el portal debe estar puesto
   if (!portalPlaced) return;
+
+  const ax = accG.x ?? 0;
+  const ay = accG.y ?? 0;
+  const az = accG.z ?? 0;
+  const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
 
   // EMA ligero (0.5/0.5) para preservar picos sin demasiado jitter
   smoothMag = smoothMag * 0.5 + rawMag * 0.5;
