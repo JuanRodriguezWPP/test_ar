@@ -94,15 +94,18 @@ const _screenQ = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 let gyroReady = false;
 let lastMotionTs = 0;
+
+// ── Detección robusta de gravedad invertida (iOS vs Android) ──
+// iOS Safari invierte el signo de accelerationIncludingGravity respecto al W3C.
+// En vez de adivinar con una sola muestra, promediamos 30 frames y usamos
+// detección de plataforma como respaldo.
 let invertGravity = false;
 let gravityCalibrated = false;
-
-// ── Auto-calibración de Bias del Giroscopio (Fix para Androids baratos)
-let gyroBiasX = 0;
-let gyroBiasY = 0;
-let gyroBiasZ = 0;
-let gyroBiasSamples = 0;
-let gyroCalibrated = false;
+let gravCalSamples = 0;
+let gravCalAccumY = 0;
+const GRAV_CAL_FRAMES = 30;
+const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+               (navigator.userAgent.includes('Mac') && 'ontouchend' in document);
 
 // ═══════════════════════════════════════════════════════════════
 // LOCOMOCIÓN — Detección de pasos FIABLE (pico-valle en magnitud)
@@ -156,6 +159,11 @@ splash.addEventListener('click', () => launch(), { once: true });
 async function launch() {
   splashLoading.classList.add('on');
   showStatus('Solicitando permisos...');
+
+  // BUG 5 FIX: Bloquear orientación a portrait para evitar desalineación
+  try {
+    await screen.orientation.lock('portrait-primary');
+  } catch (_) { /* No soportado o no permitido — OK, continuamos */ }
 
   // iOS 13+: permisos de sensores deben pedirse en gesto del usuario
   const sensorEvents = [window.DeviceOrientationEvent, window.DeviceMotionEvent];
@@ -295,13 +303,16 @@ function setupTouch() {
 
 // ═══════════════════════════════════════════════════════════════
 // DeviceOrientation → Fallback de orientación
-// Solo se usa cuando Madgwick no recibe rotationRate (algunos Android/iOS)
+// Solo se usa cuando Madgwick no ha recibido rotationRate todavía.
+// Una vez Madgwick se activa, este handler queda permanentemente inactivo
+// (BUG 4 FIX: eliminar ping-pong entre fuentes de orientación).
 // ═══════════════════════════════════════════════════════════════
 function onOrientation(e) {
   if (e.alpha === null) return;
   gyroReady = true;
 
-  // Madgwick tiene prioridad; este evento es solo el fallback
+  // BUG 4 FIX: Una vez que Madgwick se activa, NUNCA volver al fallback.
+  // Esto evita saltos de orientación por mezclar dos fuentes distintas.
   if (madgwickReady) return;
 
   _euler.set(
@@ -312,10 +323,10 @@ function onOrientation(e) {
   );
   deviceQuat.setFromEuler(_euler);
   deviceQuat.multiply(_corrQ);
-  _screenQ.setFromAxisAngle(
-    _zAxis,
-    -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
-  );
+
+  // BUG 5: Usar API moderna con fallback robusto
+  const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+  _screenQ.setFromAxisAngle(_zAxis, -THREE.MathUtils.degToRad(screenAngle));
   deviceQuat.multiply(_screenQ);
   camera.quaternion.copy(deviceQuat);
 }
@@ -327,6 +338,12 @@ function onOrientation(e) {
 //
 // accelerationIncludingGravity es SIEMPRE disponible (100% iOS y Android).
 // event.acceleration (sin gravedad) falla en ~60% de dispositivos → NO se usa.
+//
+// FIXES APLICADOS:
+//   BUG 2: const→let para ax/ay/az, calibración de gravedad multi-muestra
+//   BUG 3: Eliminada calibración manual de bias (Madgwick β lo absorbe)
+//   BUG 4: Madgwick se activa inmediatamente (sin esperar 45 frames)
+//   BUG 8: NaN guard en quaternion de salida
 // ═══════════════════════════════════════════════════════════════
 function onMotion(event) {
   const now = performance.now();
@@ -336,67 +353,86 @@ function onMotion(event) {
   const accG = event.accelerationIncludingGravity;
   if (!accG || accG.x === null) return;
 
-  const ax = accG.x ?? 0;
-  const ay = accG.y ?? 0;
-  const az = accG.z ?? 0;
+  // BUG 2a FIX: usar let en vez de const para poder invertir la gravedad
+  let ax = accG.x ?? 0;
+  let ay = accG.y ?? 0;
+  let az = accG.z ?? 0;
 
   // ── PARTE 1: Madgwick — actualizar orientación ─────────────
   const rawMag = Math.sqrt(ax * ax + ay * ay + az * az);
-  
-  // ── 1. Calibración de Gravedad Invertida ──
-  if (!gravityCalibrated && rawMag > 8.5 && rawMag < 11.0) {
-    if (ay < -3.0) invertGravity = true;
-    const isIOS = ['iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'].includes(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
-    if (isIOS) invertGravity = true;
-    gravityCalibrated = true;
+
+  // ── BUG 2b FIX: Calibración robusta de gravedad invertida ──
+  // Promediamos GRAV_CAL_FRAMES muestras de ay para determinar el signo de gravedad.
+  // iOS Safari invierte accelerationIncludingGravity respecto al estándar W3C.
+  // Algunos Android raros también lo hacen. Detectamos ambos casos.
+  if (!gravityCalibrated) {
+    // iOS se detecta por UA — siempre invierte
+    if (_isIOS) {
+      invertGravity = true;
+      gravityCalibrated = true;
+    } else if (rawMag > 8.0 && rawMag < 12.0) {
+      // En Android, promediamos ay durante 30 frames estables.
+      // En portrait normal con W3C: ay ≈ +9.81 (positivo).
+      // Si el promedio es negativo, el fabricante invierte los ejes.
+      gravCalAccumY += ay;
+      gravCalSamples++;
+      if (gravCalSamples >= GRAV_CAL_FRAMES) {
+        const avgY = gravCalAccumY / GRAV_CAL_FRAMES;
+        // Solo invertir si ay es claramente negativo (< -5 m/s²)
+        // Un umbral alto evita falsos positivos por inclinación del usuario
+        if (avgY < -5.0) invertGravity = true;
+        gravityCalibrated = true;
+      }
+    }
   }
 
   if (invertGravity) {
     ax = -ax; ay = -ay; az = -az;
   }
 
+  // ── Madgwick: fusión giroscopio + acelerómetro ─────────────
   const gyro = event.rotationRate;
   if (gyro && gyro.alpha !== null) {
-    let gx = THREE.MathUtils.degToRad(gyro.beta ?? 0);  // X = Pitch
-    let gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0); // Y = Roll
-    let gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0); // Z = Yaw
+    // Mapeo W3C → body frame del Madgwick:
+    //   beta  = rotación en X (pitch)   → gx
+    //   gamma = rotación en Y (roll)    → gy
+    //   alpha = rotación en Z (yaw)     → gz
+    const gx = THREE.MathUtils.degToRad(gyro.beta  ?? 0);
+    const gy = THREE.MathUtils.degToRad(gyro.gamma ?? 0);
+    const gz = THREE.MathUtils.degToRad(gyro.alpha ?? 0);
 
-    // Auto-calibrar Bias (Deriva) del giroscopio cuando el dispositivo está quieto
-    if (!gyroCalibrated && rawMag > 9.0 && rawMag < 10.5) {
-      gyroBiasX += gx;
-      gyroBiasY += gy;
-      gyroBiasZ += gz;
-      gyroBiasSamples++;
-      
-      if (gyroBiasSamples >= 45) { // 45 frames de quietud son suficientes
-        gyroBiasX /= 45;
-        gyroBiasY /= 45;
-        gyroBiasZ /= 45;
-        gyroCalibrated = true;
-      }
-    }
-
-    if (gyroCalibrated) {
-      gx -= gyroBiasX;
-      gy -= gyroBiasY;
-      gz -= gyroBiasZ;
-      
+    // BUG 3 FIX: Activar Madgwick inmediatamente.
+    // No necesitamos calibrar bias manualmente: el término β del Madgwick
+    // (0.033) ya compensa la deriva del giroscopio de forma continua.
+    // La calibración manual de 45 frames era peligrosa porque:
+    //   1) Acumulaba rotación real del usuario como "bias"
+    //   2) Podía bloquear Madgwick indefinidamente si el usuario se movía
+    //   3) Causaba doble compensación encima de lo que β ya hace
+    if (!madgwickReady) {
       madgwickReady = true;
       gyroReady = true;
-
-      madgwick.update(gx, gy, gz, ax, ay, az, dt);
-      madgwick.toThreeQuat(deviceQuat);
-
-      // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
-      deviceQuat.multiply(_corrQ);
-      // Corrección de rotación de pantalla (portrait/landscape)
-      _screenQ.setFromAxisAngle(
-        _zAxis,
-        -THREE.MathUtils.degToRad(window.screen?.orientation?.angle ?? window.orientation ?? 0)
-      );
-      deviceQuat.multiply(_screenQ);
-      camera.quaternion.copy(deviceQuat);
     }
+
+    madgwick.update(gx, gy, gz, ax, ay, az, dt);
+    madgwick.toThreeQuat(deviceQuat);
+
+    // BUG 8 FIX: NaN guard — si el quaternion tiene NaN, resetear Madgwick
+    if (!isFinite(deviceQuat.x) || !isFinite(deviceQuat.y) ||
+        !isFinite(deviceQuat.z) || !isFinite(deviceQuat.w)) {
+      madgwick.q0 = 1; madgwick.q1 = 0; madgwick.q2 = 0; madgwick.q3 = 0;
+      deviceQuat.set(0, 0, 0, 1);
+      return;
+    }
+
+    // Corrección de eje: Z↑ (sensor) → Y↑ (Three.js)
+    deviceQuat.multiply(_corrQ);
+
+    // BUG 5 FIX: Corrección de rotación de pantalla con API moderna
+    const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+    _screenQ.setFromAxisAngle(_zAxis, -THREE.MathUtils.degToRad(screenAngle));
+    deviceQuat.multiply(_screenQ);
+
+    camera.quaternion.copy(deviceQuat);
   }
 
   // ── PARTE 2: Detección de pasos — solo cuando el portal está puesto ──
@@ -433,8 +469,10 @@ function onMotion(event) {
 //   entre pasos cuando se sigue caminando.
 // ═══════════════════════════════════════════════════════════════
 function onStep(now) {
+  // BUG 7 FIX: Usar camera.quaternion (siempre actualizado) en vez de deviceQuat
+  // (que podía estar desactualizado si Madgwick no se activaba).
   // Vector hacia adelante de la cámara proyectado en el plano XZ
-  _camFwd.set(0, 0, -1).applyQuaternion(deviceQuat);
+  _camFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
   _camFwd.y = 0;
   if (_camFwd.lengthSq() < 0.0001) return; // sin orientación todavía
   _camFwd.normalize();
@@ -467,7 +505,7 @@ async function loadPortal() {
 function placePortal() {
   if (!portalGroup || portalPlaced) return;
 
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat);
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   fwd.y = 0;
   fwd.normalize();
 
@@ -501,7 +539,7 @@ function renderLoop(ts) {
   // La distancia ahora se mide desde el virtualPos
   const toUser = virtualPos.clone().sub(portalOrigin);
   const portalProgress = toUser.dot(portalAxisDir) + 3.5;
-  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalProgress, deviceQuat);
+  if (portalGroup?.userData.tick) portalGroup.userData.tick(ts, portalProgress, camera.quaternion);
 
   if (portalPlaced) {
     const now = performance.now();
